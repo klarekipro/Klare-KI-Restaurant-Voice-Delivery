@@ -6,12 +6,15 @@ const html = fs.readFileSync(process.argv[2], 'utf8');
 const code = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/const menu = .*?;/, 'const menu = [];');
 function element(id) {
   return { value: '', disabled: false, textContent: '', innerHTML: '', dataset: {}, callbacks: {},
-    addEventListener(event, fn) { this.callbacks[event] = fn; } };
+    addEventListener(event, fn) { this.callbacks[event] = fn; },
+    append(...children) { this.children = [...(this.children || []), ...children]; },
+    replaceChildren(...children) { this.children = children; this.textContent = ''; for (const child of children) if (child.id) ids[child.id] = child; },
+    reset() { for (const id of ['phone','name','street','house_number','plz','city','notes']) ids[id].value = ''; } };
 }
-const ids = Object.fromEntries(['phone','name','street','house_number','plz','city','notes','total','lookup-btn','lookup-result','submit-btn','submit-result','new-order-btn'].map(id => [id, element(id)]));
+const ids = Object.fromEntries(['phone','name','street','house_number','plz','city','notes','total','lookup-btn','lookup-result','submit-btn','submit-result','new-order-btn','caller-form'].map(id => [id, element(id)]));
 const qty = element('qty'); qty.value='1'; qty.dataset={ menuId:'1', price:'100' };
 let calls=[], sequence=0, mode='success';
-const ctx={document:{getElementById:id=>ids[id],querySelectorAll:()=>[qty]},crypto:{randomUUID:()=>`test-key-${++sequence}`},fetch: async (url,opts)=>{
+const ctx={document:{getElementById:id=>ids[id],querySelectorAll:()=>[qty],createElement:tag=>element('')},crypto:{randomUUID:()=>`test-key-${++sequence}`},fetch: async (url,opts)=>{
   calls.push(opts);
   if (mode==='offline') throw Error('offline');
   await new Promise(resolve=>setTimeout(resolve,10));

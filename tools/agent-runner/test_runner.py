@@ -86,7 +86,7 @@ class RunnerTests(unittest.TestCase):
         e,m,fake=self.limited_edit('codex');e.drive(m)
         self.assertEqual(fake.calls,['codex','claude','claude']);self.assertEqual(self.state(m),'COMPLETED')
     def test_restart_at_each_checkpoint_boundary(self):
-        for phase in ['PRESERVED','VALIDATED','GIT_COMMITTED','COMMITTED','HANDED_OFF']:
+        for phase in ['OUTCOME_CAPTURED','PRESERVED','VALIDATED','GIT_COMMITTED','COMMITTED','HANDED_OFF']:
             with self.subTest(phase=phase):
                 self.store.c.execute('DELETE FROM availability')
                 e,m,fake=self.limited_edit()
@@ -101,6 +101,30 @@ class RunnerTests(unittest.TestCase):
                 work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0])
                 self.assertEqual((work/'app/partial.py').read_text(),'value = 1\n')
                 self.assertEqual(len(r.git(work,'log','--format=%s','--grep=Runner validated checkpoint').splitlines()),1)
+    def test_real_process_exit_during_handoff(self):
+        import sys
+        e,m=self.setup_engine(Fake(),allow_edits=True,review_fallback=True)
+        state=str(self.store.path);self.store.c.close()
+        program = """
+import importlib.util, pathlib, os, sys, subprocess
+spec=importlib.util.spec_from_file_location('runner',sys.argv[1]);r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+class Interrupted:
+ def execute(self,provider,work,*args):
+  path=pathlib.Path(work)/'app';path.mkdir();(path/'partial.py').write_text('value = 1\\n')
+  return dict(limited=True,result=None,exit_code=1,usage={},error='SIMULATED 429',duration=.01)
+s=r.Store(sys.argv[2]);e=r.Engine(s,Interrupted(),lambda *a:subprocess.CompletedProcess([],0,'',''))
+def crash(phase):
+ if phase=='GIT_COMMITTED': os._exit(73)
+e.checkpoint_hook=crash;e.drive(sys.argv[3])
+"""
+        child=subprocess.run([sys.executable,'-c',program,str(r.__file__),state,m],capture_output=True,text=True)
+        self.assertEqual(child.returncode,73,child.stderr)
+        self.store=r.Store(state);fake=Fake(response(),response());resumed=r.Engine(self.store,fake,lambda *a:subprocess.CompletedProcess([],0,'checked',''));resumed.drive(m)
+        self.assertEqual(fake.calls,['codex','codex']);self.assertEqual(self.state(m),'COMPLETED')
+        work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0])
+        self.assertEqual(len(r.git(work,'log','--format=%s','--grep=Runner validated checkpoint').splitlines()),1)
+        self.assertEqual((work/'app/partial.py').read_text(),'value = 1\n')
+
     def test_changed_preserved_checkpoint_holds(self):
         e,m,fake=self.limited_edit()
         def crash(phase): raise SystemExit('crash')

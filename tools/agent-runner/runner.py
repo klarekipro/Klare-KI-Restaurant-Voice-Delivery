@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,mission TEXT,at REAL,ev
 CREATE TABLE IF NOT EXISTS tests(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER,name TEXT,passed INTEGER,exit_code INTEGER,output TEXT);
 CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY,mission TEXT,from_attempt INTEGER,to_task INTEGER,payload TEXT);
 CREATE TABLE IF NOT EXISTS approvals(id INTEGER PRIMARY KEY,mission TEXT,reason TEXT,approved INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS outcomes(attempt INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS checkpoints(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER UNIQUE,task INTEGER,phase TEXT,base_sha TEXT,digest TEXT,snapshot TEXT,commit_sha TEXT,classification TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS one_handoff_per_attempt ON handoffs(from_attempt);
 CREATE TABLE IF NOT EXISTS commits(id INTEGER PRIMARY KEY,mission TEXT,sha TEXT,attempt INTEGER);
@@ -341,6 +342,17 @@ class Engine:
         finally: original.close()
 
     def recover(self,m):
+        # A durably captured limit outcome can be reconciled without replaying the CLI.
+        pending=self.c.execute("SELECT a.id,a.task,a.provider,o.payload FROM attempts a JOIN tasks t ON t.id=a.task JOIN outcomes o ON o.attempt=a.id LEFT JOIN checkpoints p ON p.attempt=a.id WHERE t.mission=? AND p.id IS NULL",(m,)).fetchall()
+        for a in pending:
+            if not json.loads(a['payload']).get('limited'): continue
+            row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
+            self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a['id'],))
+            self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed captured limit; retry time unknown',NULL)",(a['provider'],))
+            if row['state']!='PROVIDER_LIMITED': self.s.state(m,'PROVIDER_LIMITED')
+            task=self.c.execute('SELECT * FROM tasks WHERE id=?',(a['task'],)).fetchone()
+            try: self.checkpoint(m,a['id'],task,Path(row['worktree']),json.loads(row['definition']))
+            except Exception as exc: self.s.hold(m,'captured limit checkpoint unsafe: '+str(exc));return False
         for cp in self.c.execute("SELECT attempt FROM checkpoints WHERE mission=? AND phase!='HANDED_OFF'",(m,)).fetchall():
             row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
             try: self.continue_checkpoint(m,cp['attempt'],Path(row['worktree']),json.loads(row['definition']))
@@ -406,7 +418,13 @@ class Engine:
             self.c.execute("UPDATE attempts SET state='FAILED',error=? WHERE id=?",(str(exc),a));
             if self.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0]!='CANCELLED': self.s.hold(m,'execution interrupted or isolation unavailable: '+str(exc))
             return False
-        self.c.execute('UPDATE attempts SET duration=?,exit_code=?,result=?,usage=?,error=? WHERE id=?',(r['duration'],r['exit_code'],json.dumps(r['result']),json.dumps(r['usage']),r['error'],a))
+        self.c.execute('BEGIN IMMEDIATE')
+        try:
+            self.c.execute('INSERT INTO outcomes(attempt,payload) VALUES(?,?)',(a,json.dumps(r)))
+            self.c.execute('UPDATE attempts SET duration=?,exit_code=?,result=?,usage=?,error=? WHERE id=?',(r['duration'],r['exit_code'],json.dumps(r['result']),json.dumps(r['usage']),r['error'],a))
+            self.c.execute('COMMIT')
+        except BaseException: self.c.execute('ROLLBACK');raise
+        self.checkpoint_hook('OUTCOME_CAPTURED')
         if r.get('limited'):
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed provider limit; retry time unknown',NULL)",(t['provider'],));self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a,));self.s.state(m,'PROVIDER_LIMITED')
             try: return self.checkpoint(m,a,t,work,d)
