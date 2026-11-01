@@ -100,3 +100,8 @@ python3 tools/agent-runner/demo_quota.py run --state .agent-runner/demo-new/stat
 This uses a new private store, controlled synthetic 429/reset metadata and simulated eligibility time, then starts a separate one-shot worker with **real Codex CLI** availability/work/review requests plus external checks. It does not install launchd, exhaust real quota, alter the system clock or claim live reset detection. A duplicate worker verifies that completed work is not repeated. See `outputs/codex/mission-06/VALIDATION.md` for measured coverage.
 
 Teardown uses the last reviewed installed bytes, so a changed terminal PATH does not prevent disable/uninstall. Uninstall refuses to remove the configuration while launchctl still reports the job loaded. Activation still requires a freshly reviewed exact configuration.
+
+
+## Deferred enrollment (minimal Mission 08 extension)
+
+`enqueue <mission-file> --not-before <timezone-aware ISO timestamp>` registers a mission/worktree in SQLite without calling any provider. This is a scheduling gate, not WAITING_QUOTA and not a quota reset claim. Scheduler status and quota next-check show pending scheduled work. The original duration starts at enrollment and includes the delay; no budgets are reset. A future Engine.step/resume cannot bypass not-before. After the time gate, normal provider selection and real quota handling apply. Pauses, holds, scope/code/branch changes, unknown work and expired budgets still prevent dispatch. The same writer lock and private SQLite store are used; no second runner/service is installed.

@@ -17,6 +17,7 @@ import time
 import uuid
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import quota
+import deferred
 
 SCHEMA = {'type':'object','properties':{'status':{'type':'string','enum':['done','repair','approval','limited']},'summary':{'type':'string'},'findings':{'type':'array','items':{'type':'string'}}},'required':['status','summary','findings'],'additionalProperties':False}
 STATES = {'QUEUED','RUNNING','VALIDATING','COMPLETED','RETRYABLE_FAILURE','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED','WAITING_QUOTA','STOPPED'}
@@ -220,6 +221,7 @@ class CLIProvider:
 class Engine:
     Hold=Hold
     git_status=staticmethod(lambda work:git(work,'status','--porcelain'))
+    git_branch=staticmethod(lambda work:git(work,'symbolic-ref','--short','HEAD'))
     git_head=staticmethod(lambda work:git(work,'rev-parse','HEAD'))
     def __init__(self,store,provider=None,validator=None):
         self.s=store;self.c=store.c;self.provider=provider or CLIProvider();self.validator=validator
@@ -227,7 +229,8 @@ class Engine:
         return self.c.execute('INSERT INTO tasks(mission,provider,state,kind,prompt,retries) VALUES(?,?,\'QUEUED\',?,?,?)',(m,p,kind,prompt,retries)).lastrowid
     def start(self,definition,repo,mission_id=None):
         d=json.loads(Path(definition).read_text())
-        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks','auto_resume_quota','quota_probe_authorized'}
+        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks','auto_resume_quota','quota_probe_authorized','not_before'}
+        if d.get('not_before'): deferred.parse_time(d['not_before'])
         if set(d)-allowed: raise Hold('unknown mission options')
         if not all(x in CHECKS for x in d.get('checkpoint_checks',d.get('checks',[]))): raise Hold('checkpoint command outside allowlist')
         if not all(x in CHECKS for x in d.get('checks',[])): raise Hold('validation command outside allowlist')
@@ -504,6 +507,7 @@ class Engine:
         return ok
     def step(self,m):
         row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone();d=json.loads(row['definition']);work=Path(row['worktree'])
+        if d.get('not_before') and time.time()<deferred.parse_time(d['not_before']):return False
         if row['state'] in ('COMPLETED','FAILED','CANCELLED','STOPPED','WAITING_APPROVAL','WAITING_QUOTA') or row['paused']: return False
         if not self.recover(m): return False
         attempts=self.c.execute('SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=?',(m,)).fetchone()[0]
@@ -624,10 +628,14 @@ class Engine:
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held','followup','scheduler','quota']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');parser.add_argument('--output');parser.add_argument('--authorize-activation');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held','followup','scheduler','quota','enqueue']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');parser.add_argument('--output');parser.add_argument('--authorize-activation');parser.add_argument('--not-before');args=parser.parse_args()
     signal.signal(signal.SIGTERM,lambda *args:(_ for _ in ()).throw(KeyboardInterrupt()))
     s=Store(args.state);e=Engine(s)
     try:
+        if args.command=='enqueue':
+            if not args.mission or not args.not_before:parser.error('enqueue requires mission file and --not-before timezone-aware timestamp')
+            with s.lock():m=deferred.enqueue(e,args.mission,Path.cwd(),args.not_before)
+            print(json.dumps({'mission':m,'status':s.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0],'not_before':args.not_before,'AI_calls':0}));return
         if args.command in ('scheduler','quota'):
             import scheduler
             scheduler.command(e,args,Path(__file__).resolve());return

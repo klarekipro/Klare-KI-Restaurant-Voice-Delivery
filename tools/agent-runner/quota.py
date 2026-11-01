@@ -53,7 +53,7 @@ def retry_time(data, now):
 
 def code_hash():
     root=Path(__file__).parent
-    return hashlib.sha256(b''.join((root/name).read_bytes() for name in ('runner.py','quota.py','scheduler.py','check_simulator.cjs'))).hexdigest()
+    return hashlib.sha256(b''.join((root/name).read_bytes() for name in ('runner.py','quota.py','scheduler.py','check_simulator.cjs','deferred.py'))).hexdigest()
 
 def scope_hash(d,started):
     return hashlib.sha256(json.dumps({'definition':d,'started':started},sort_keys=True,separators=(',',':')).encode()).hexdigest()
