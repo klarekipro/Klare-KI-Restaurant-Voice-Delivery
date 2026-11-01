@@ -107,12 +107,18 @@ class CLIProvider:
         schema=scratch/'schema.json';schema.write_text(json.dumps(SCHEMA));output=scratch/'result.json'
         empty=scratch/'mcp.json';empty.write_text('{"mcpServers":{}}')
         if provider=='claude':
+            credential=run(['security','find-generic-password','-s','Claude Code-credentials','-w'])
+            if credential.returncode==0:
+                try:
+                    token=json.loads(credential.stdout).get('claudeAiOauth',{}).get('accessToken')
+                    if token: env['CLAUDE_CODE_OAUTH_TOKEN']=token
+                except ValueError: pass
             args=['claude','-p','--output-format','json','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
         else:
             args=['codex','exec','--ignore-user-config','--ignore-rules','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--sandbox','workspace-write','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
         args=['sandbox-exec','-p',profile(worktree,scratch),*args]
         start=time.monotonic()
-        proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
         try: stdout,stderr=proc.communicate(timeout=timeout)
         except (subprocess.TimeoutExpired,BaseException):
             os.killpg(proc.pid,signal.SIGTERM)
@@ -136,6 +142,7 @@ class CLIProvider:
                 if output.exists(): result=json.loads(output.read_text())
         except (ValueError,TypeError): error='malformed provider JSON'
         valid=isinstance(result,dict) and set(result)=={'status','summary','findings'} and result['status'] in ('done','repair','approval','limited') and isinstance(result['summary'],str) and isinstance(result['findings'],list) and all(isinstance(x,str) for x in result['findings'])
+        if not valid: error+='; structured output missing/invalid; events: '+stdout[-4000:]
         return dict(exit_code=proc.returncode,result=result if valid else None,usage=usage,error=error,duration=time.monotonic()-start,limited=limited)
 
 class Engine:
