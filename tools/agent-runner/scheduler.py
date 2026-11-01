@@ -72,8 +72,13 @@ def command(engine,args,script):
     if action not in ('install','enable','disable','uninstall'): raise engine.Hold('unknown scheduler command')
     if sys.platform!='darwin' or os.getuid()==0: raise engine.Hold('scheduler activation requires a non-root macOS user')
     if not args.authorize_activation: raise engine.Hold('separate explicit --authorize-activation NOTE required; development does not authorize persistence')
-    if not generated.exists() or generated.read_bytes()!=expected: raise engine.Hold('generate and review the exact current configuration first')
-    if target.exists() and target.read_bytes()!=expected: raise engine.Hold('existing LaunchAgent differs; refusing to overwrite/remove it')
+    if not generated.exists(): raise engine.Hold('reviewed configuration is missing')
+    approved=generated.read_bytes()
+    try: reviewed=plistlib.loads(approved)
+    except Exception: raise engine.Hold('reviewed configuration is invalid')
+    if reviewed.get('Label')!=LABEL: raise engine.Hold('reviewed configuration has another label')
+    if action in ('install','enable') and approved!=expected: raise engine.Hold('generate and review the exact current configuration first')
+    if target.exists() and target.read_bytes()!=approved: raise engine.Hold('existing LaunchAgent differs; refusing to overwrite/remove it')
     def launch(*argv,allow_failure=False):
         result=subprocess.run(['launchctl',*argv],capture_output=True,text=True)
         if result.returncode and not allow_failure: raise engine.Hold('launchctl failed: '+result.stderr.strip())
@@ -90,5 +95,6 @@ def command(engine,args,script):
         if not active: launch('bootstrap',domain,str(target))
     else:
         launch('bootout',job,allow_failure=True);launch('disable',job)
+        if subprocess.run(['launchctl','print',job],capture_output=True).returncode==0: raise engine.Hold('job remains loaded; refusing to remove its configuration')
         if action=='uninstall' and target.exists(): target.unlink()
     engine.s.event(None,'scheduler_'+action,args.authorize_activation);print(action,'completed')

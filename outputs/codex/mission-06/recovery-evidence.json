@@ -1,0 +1,358 @@
+{
+  "source_commit": "8471c4d5215b80cb260a546d339291afe727630e",
+  "live_runner_commit": "58634da",
+  "simulation": {
+    "mission": "b6b9f5999698",
+    "simulated_check_time": 1793570592.9642859,
+    "quota_errors_simulated": true,
+    "real_reset_observed": false,
+    "no_Claude_request": true
+  },
+  "mission": {
+    "id": "b6b9f5999698",
+    "state": "COMPLETED",
+    "definition": {
+      "name": "Mission06 controlled quota / real CLI recovery",
+      "source": "8471c4d5215b80cb260a546d339291afe727630e",
+      "prompt": "Read-only bounded review of the existing simulator retry behavior and docs/agents/CURRENT_STATE.md. Do not edit files. Read-only local shell inspection of these project files is authorized (cat/sed/rg); no installs, writes, external services or Git mutations. Return done when review is complete, list limitations, and do not claim browser verification or product readiness.",
+      "checks": [
+        "pytest",
+        "acceptance",
+        "simulator"
+      ],
+      "python": "/Users/admin/Projects/restaurant-agent-runner/.venv/bin/python",
+      "max_seconds": 7200,
+      "max_invocations": 6,
+      "max_retries": 0,
+      "max_failures": 4,
+      "max_concurrent": 1,
+      "provider": "claude",
+      "fallback": true,
+      "review_fallback": true,
+      "auto_resume_quota": true,
+      "quota_probe_authorized": true
+    },
+    "worktree": "/Users/admin/Projects/restaurant-quota-resume/.agent-runner/demo-verified/worktrees/b6b9f5999698",
+    "started": 1793569692.117957,
+    "paused": 0
+  },
+  "authorization_core_code_hash_matches_final": false,
+  "attempts": [
+    {
+      "id": 1,
+      "provider": "claude",
+      "state": "PROVIDER_LIMITED",
+      "started": 1793569692.1414971,
+      "duration": 0.0,
+      "exit_code": 1,
+      "result": null,
+      "usage": {},
+      "availability_probe": 0
+    },
+    {
+      "id": 2,
+      "provider": "codex",
+      "state": "COMPLETED",
+      "started": 1793569706.7686841,
+      "duration": 4.990283041028306,
+      "exit_code": 0,
+      "result": {
+        "status": "done",
+        "summary": "availability request answered",
+        "findings": []
+      },
+      "usage": {
+        "input_tokens": 14485,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 25,
+        "reasoning_output_tokens": 0
+      },
+      "availability_probe": 1
+    },
+    {
+      "id": 3,
+      "provider": "codex",
+      "state": "COMPLETED",
+      "started": 1793569713.833055,
+      "duration": 23.90694004087709,
+      "exit_code": 0,
+      "result": {
+        "status": "done",
+        "summary": "Completed the bounded read-only review. No files changed or checks executed.",
+        "findings": [
+          "Simulator retries retain the original serialized payload and idempotency key after network or HTTP errors. Concurrent submissions are blocked; explicit new-order reset rotates the key and clears the payload.",
+          "Known limitation: rejected input remains frozen, so editing fields after an HTTP validation error cannot correct the next retry. CURRENT_STATE.md references validation evidence that explicitly acknowledges this recovery limitation.",
+          "The simulator check covers uncertain retries, duplicate clicks and new-order reset using DOM/fetch stubs; it does not cover HTTP rejection recovery.",
+          "CURRENT_STATE.md reports historical passing checks and a different worktree. Those claims and checkpoint commit 8471c4d5215b80cb260a546d339291afe727630e were not independently verified.",
+          "Checkpoint completion checks pytest, acceptance and simulator remain pending under this read-only review. Browser acceptance is unverified; product readiness is not established."
+        ]
+      },
+      "usage": {
+        "input_tokens": 106351,
+        "cached_input_tokens": 78464,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 753,
+        "reasoning_output_tokens": 15
+      },
+      "availability_probe": 0
+    },
+    {
+      "id": 4,
+      "provider": "codex",
+      "state": "COMPLETED",
+      "started": 1793569750.996543,
+      "duration": 23.44452591589652,
+      "exit_code": 0,
+      "result": {
+        "status": "done",
+        "summary": "Completed the bounded read-only review. No files edited or checks executed; checkpoint completion remains incomplete.",
+        "findings": [
+          "Defect: app/templates/call_simulator.html:102\u2013138 freezes the first payload after HTTP validation rejection. Correcting fields and retrying resends invalid data; the reset control is available only after success (lines 149\u2013165). Backend validation rejects missing fields, invalid phone/postcode and empty orders (app/main.py:758\u2013769).",
+          "Coverage gap: tools/agent-runner/check_simulator.cjs tests network failure, concurrent clicks and successful reset, but its fetch stub never returns an HTTP rejection. It cannot detect the validation-recovery defect.",
+          "Documentation limitation: CURRENT_STATE.md:3 names another worktree; lines 7\u20139 describe historical completion and expected results, not validation of this checkpoint. The linked VALIDATION.md explicitly acknowledges missing input-rejection recovery coverage.",
+          "Static inspection confirms uncertain retries preserve the serialized payload and idempotency key, and explicit reset rotates the key. Runtime behavior was not independently verified.",
+          "Limitations: checkpoint commit 8471c4d5215b80cb260a546d339291afe727630e and saved-change provenance were not verified. pytest, acceptance and simulator checks remain pending under the read-only shell scope. Browser acceptance is unverified; product readiness is not established."
+        ]
+      },
+      "usage": {
+        "input_tokens": 110920,
+        "cached_input_tokens": 84352,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 757,
+        "reasoning_output_tokens": 0
+      },
+      "availability_probe": 0
+    }
+  ],
+  "quota_waits": [
+    {
+      "mission": "b6b9f5999698",
+      "task": 1,
+      "provider": "claude",
+      "evidence": "{\"confirmed\": true, \"code\": 429, \"reset_at\": 1793573292.208745, \"simulated\": true}",
+      "last_attempt": 1793569692.209156,
+      "next_check": 1793573292.208745,
+      "checks": 0,
+      "anchor": "{\"sha\": \"8471c4d5215b80cb260a546d339291afe727630e\", \"digest\": \"04972eb86d55f12b41b66602290fd4d5ef49fe802db9daad50c13d91c0943e09\", \"checkpoint\": 1, \"task_scope\": \"ef4499babd5ae72d6c38eb84e473d99f337d1d12833764c3dc44698bb8ac8896\"}",
+      "provider_state": "limited"
+    },
+    {
+      "mission": "b6b9f5999698",
+      "task": 1,
+      "provider": "codex",
+      "evidence": "{\"confirmed\": true, \"code\": 429, \"reset_at\": 1793570591.964284, \"simulated\": true}",
+      "last_attempt": 1793570592.9642859,
+      "next_check": 1793570591.9642859,
+      "checks": 1,
+      "anchor": "{\"sha\": \"8471c4d5215b80cb260a546d339291afe727630e\", \"digest\": \"04972eb86d55f12b41b66602290fd4d5ef49fe802db9daad50c13d91c0943e09\", \"checkpoint\": 1, \"task_scope\": \"ef4499babd5ae72d6c38eb84e473d99f337d1d12833764c3dc44698bb8ac8896\"}",
+      "provider_state": "recovered"
+    }
+  ],
+  "events": [
+    {
+      "at": 1793569692.1194649,
+      "event": "created",
+      "detail": "Mission06 controlled quota / real CLI recovery"
+    },
+    {
+      "at": 1793569692.141417,
+      "event": "RUNNING",
+      "detail": ""
+    },
+    {
+      "at": 1793569692.209676,
+      "event": "PROVIDER_LIMITED",
+      "detail": ""
+    },
+    {
+      "at": 1793569692.323043,
+      "event": "checkpoint_preserved",
+      "detail": "04972eb86d55f12b41b66602290fd4d5ef49fe802db9daad50c13d91c0943e09"
+    },
+    {
+      "at": 1793569692.3781052,
+      "event": "VALIDATING",
+      "detail": ""
+    },
+    {
+      "at": 1793569692.3782651,
+      "event": "checkpoint_validation_policy",
+      "detail": "{\"safety_checks\": [\"pytest\", \"acceptance\", \"simulator\"], \"completion_checks\": [\"pytest\", \"acceptance\", \"simulator\"]}"
+    },
+    {
+      "at": 1793569706.4867048,
+      "event": "WAITING_QUOTA",
+      "detail": ""
+    },
+    {
+      "at": 1793569706.486785,
+      "event": "waiting_quota",
+      "detail": "validated anchor preserved; budgets and approvals unchanged"
+    },
+    {
+      "at": 1793569706.547275,
+      "event": "scheduler_tick",
+      "detail": "single-instance acquired"
+    },
+    {
+      "at": 1793569711.9825659,
+      "event": "quota_probe_result",
+      "detail": "{\"attempt\": 2, \"provider\": \"codex\", \"simulated\": false}"
+    },
+    {
+      "at": 1793569711.982688,
+      "event": "provider_recovered",
+      "detail": "codex"
+    },
+    {
+      "at": 1793569712.145304,
+      "event": "VALIDATING",
+      "detail": ""
+    },
+    {
+      "at": 1793569713.814653,
+      "event": "QUEUED",
+      "detail": ""
+    },
+    {
+      "at": 1793569713.814803,
+      "event": "mission_resumed",
+      "detail": "codex"
+    },
+    {
+      "at": 1793569713.832978,
+      "event": "RUNNING",
+      "detail": ""
+    },
+    {
+      "at": 1793569738.0249522,
+      "event": "VALIDATING",
+      "detail": ""
+    },
+    {
+      "at": 1793569738.060997,
+      "event": "git_changes",
+      "detail": "clean"
+    },
+    {
+      "at": 1793569750.9784052,
+      "event": "same_provider_independent_review",
+      "detail": "fresh CLI context; other provider unavailable; external checks required"
+    },
+    {
+      "at": 1793569750.978536,
+      "event": "QUEUED",
+      "detail": ""
+    },
+    {
+      "at": 1793569750.996462,
+      "event": "RUNNING",
+      "detail": ""
+    },
+    {
+      "at": 1793569774.730197,
+      "event": "VALIDATING",
+      "detail": ""
+    },
+    {
+      "at": 1793569774.7663941,
+      "event": "git_changes",
+      "detail": "clean"
+    },
+    {
+      "at": 1793569787.010124,
+      "event": "COMPLETED",
+      "detail": ""
+    },
+    {
+      "at": 1793569787.010646,
+      "event": "scheduler_idle",
+      "detail": "tick completed"
+    },
+    {
+      "at": 1793569787.077185,
+      "event": "scheduler_tick",
+      "detail": "single-instance acquired"
+    },
+    {
+      "at": 1793569787.0773702,
+      "event": "scheduler_idle",
+      "detail": "tick completed"
+    }
+  ],
+  "checks": [
+    {
+      "attempt": 1,
+      "name": "pytest",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 1,
+      "name": "acceptance",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 1,
+      "name": "simulator",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 3,
+      "name": "pytest",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 3,
+      "name": "acceptance",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 3,
+      "name": "simulator",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 4,
+      "name": "pytest",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 4,
+      "name": "acceptance",
+      "passed": 1,
+      "exit_code": 0
+    },
+    {
+      "attempt": 4,
+      "name": "simulator",
+      "passed": 1,
+      "exit_code": 0
+    }
+  ],
+  "delivery": [
+    {
+      "mission": "b6b9f5999698",
+      "commit_sha": "8471c4d5215b80cb260a546d339291afe727630e",
+      "digest": "04972eb86d55f12b41b66602290fd4d5ef49fe802db9daad50c13d91c0943e09",
+      "review_attempt": 4,
+      "classification": "verified-task-complete"
+    }
+  ],
+  "no_duplicate_after_second_worker": true,
+  "real_CLI_requests": 3,
+  "real_Claude_requests": 0,
+  "live_quota_reset_detection_observed": false,
+  "launchagent_installed_or_activated": false,
+  "post_demo_change": "Activation teardown controller now tolerates PATH drift and refuses uninstall while the job is still loaded; tested with fake HOME/mocked launchctl.",
+  "actual_recovery_code_unchanged_since_live_run": true,
+  "live_code_sha256": "d16c7850d2c122efd119e0e1150466818b12276490a7ff3de6bfefd025d18284",
+  "final_code_sha256": "a54ccf26d2e85cdb8e3ec4e99ab29aea8ceac5e2e43b1793fb99791f8bb74caf"
+}

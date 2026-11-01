@@ -47,3 +47,56 @@ python3 tools/agent-runner/runner.py recover-held 92bd71a914ab \
 No manual prompt/report copying is required: SQLite records, original bytes and machine API429 evidence are imported automatically. Repeated imports return the same new mission; an incomplete construction holds rather than creating a duplicate. Inherited duration/invocation/retry caps are preserved. A new follow-up after a review rejects a result requires explicit authorization: `followup <failed-mission-id> --approval-note "authority and bounded scope"`. It forwards structured findings automatically and does not reopen or reset the failed mission. It cannot clear WAITING_APPROVAL.
 
 If authorized with `review_fallback: true`, an available provider may perform a fresh independent-context review when the other provider is unavailable. This is logged as same-provider review, never described as cross-provider review. External checks remain mandatory. Browser/mobile testing is not claimed by the Node DOM-stub check.
+
+## Quota waiting and unattended continuation (Mission 06)
+
+New missions opt in with `auto_resume_quota: true`. `quota_probe_authorized: true` separately authorizes minimal real availability requests if no authoritative success signal exists. `quota-review.json` is a predefined read-only example; prepare the existing project `.venv` first. It has an explicit 24-hour wall-clock budget and six total invocations. Waiting, sleep and probes do not reset that budget. Short original mission deadlines can expire before quota recovery.
+
+```
+python3 tools/agent-runner/runner.py start tools/agent-runner/quota-review.json
+python3 tools/agent-runner/runner.py quota status
+python3 tools/agent-runner/runner.py quota next-check
+python3 tools/agent-runner/runner.py scheduler status
+python3 tools/agent-runner/runner.py scheduler logs
+python3 tools/agent-runner/runner.py scheduler tick
+```
+
+`WAITING_QUOTA` is distinct from FAILED and WAITING_APPROVAL. SQLite records task/provider, confirmed machine error, last attempt, next eligible check, check count, availability and validated checkpoint/receipt. Authentication, network errors and approval requests are not quota signals. Reliable machine reset timestamps/Retry-After are honored as lower bounds; no natural-language reset schedules are inferred. Without reset metadata, checks back off from 15 minutes to 6 hours, globally at most four checks/hour/provider and eight checks per provider signal store. After that limit the status shows `check_limit_reached`; no silent counter reset occurs.
+
+Login status is not a quota-capacity signal. A successful structured provider response can prove current availability without another probe. Otherwise only a preauthorized narrowly scoped probe may run; Claude has no tools and Codex has read-only project access. Every probe is a persisted invocation with exit/usage/duration and consumes the same mission budgets. Cross-provider dollar caps remain unsupported/fail-closed. A successful availability answer does not guarantee that a later task will not hit another limit.
+
+Automatic resume binds the original definition, start time, task prompt/retry counter, runner safety-code digest and validated file contents. Changed scope, unknown in-flight execution, dirty unvalidated work or a human hold prevents scheduling. CANCELLED/STOPPED/paused missions do not resume. Validated intermediate handoff/finalization phases can be reconciled after a crash. Probe results and recovery signals are atomic, so a restart after a successful probe does not bill the same check again. One writer lock covers scheduler and manual execution; an active provider is never interrupted merely because another recovers.
+
+### LaunchAgent configuration and activation
+
+Generate and inspect without activating anything:
+
+```
+python3 tools/agent-runner/runner.py scheduler generate
+plutil -lint .agent-runner/launchagent.plist
+```
+
+The per-user job is `com.klareki.agent-runner`, with a 300-second one-shot interval, RunAtLoad after login, fixed Python arguments and no mission-provided shell commands. It needs no server or root. On wake the next worker evaluates persisted eligibility once, not a backlog of requests. Physical login/sleep integration is not verified until separately authorized activation.
+
+**Do not execute the following until the user separately approves persistent activation.** The note is recorded; do not put secrets in it.
+
+```
+python3 tools/agent-runner/runner.py scheduler install --authorize-activation "User approval reference"
+python3 tools/agent-runner/runner.py scheduler enable --authorize-activation "User approval reference"
+python3 tools/agent-runner/runner.py scheduler disable --authorize-activation "User approval reference"
+python3 tools/agent-runner/runner.py scheduler uninstall --authorize-activation "User approval reference"
+```
+
+Install only copies the exact reviewed configuration to `~/Library/LaunchAgents/com.klareki.agent-runner.plist`; it is itself a persistent change (including future login). Enable uses the current user's launchctl GUI domain. Unknown existing configurations are never overwritten or removed. Editing/moving the runner or mission can invalidate waiting authorizations; do not silently rebind them.
+
+Default private state: `.agent-runner/state.sqlite`; readable events: SQLite `events` / `scheduler logs`; launchd stdout/stderr: `.agent-runner/logs/scheduler.{out,err}.log`. Use `--state /absolute/path` consistently before commands for another store. Preserve these directories across restarts; do not commit databases, credentials or snapshots.
+
+### Reproducible real-CLI recovery demo
+
+```
+python3 tools/agent-runner/demo_quota.py run --state .agent-runner/demo-new/state.sqlite --python /absolute/path/to/reviewed/.venv/bin/python
+```
+
+This uses a new private store, controlled synthetic 429/reset metadata and simulated eligibility time, then starts a separate one-shot worker with **real Codex CLI** availability/work/review requests plus external checks. It does not install launchd, exhaust real quota, alter the system clock or claim live reset detection. A duplicate worker verifies that completed work is not repeated. See `outputs/codex/mission-06/VALIDATION.md` for measured coverage.
+
+Teardown uses the last reviewed installed bytes, so a changed terminal PATH does not prevent disable/uninstall. Uninstall refuses to remove the configuration while launchctl still reports the job loaded. Activation still requires a freshly reviewed exact configuration.

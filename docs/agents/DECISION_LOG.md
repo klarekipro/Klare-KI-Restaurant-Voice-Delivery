@@ -17,3 +17,7 @@
 - Normalized outcomes, content-bound receipts, atomic unique handoffs and committed-tree identity support replay across interrupted handoffs. Unknown process outcomes still hold.
 - Explicit safety checks may differ from final completion checks; final acceptance and independent-context review remain mandatory. Same-provider review fallback is opt-in and logged.
 - A failed bounded mission is terminal. A new explicitly authorized follow-up forwards structured findings, preserving source records and inherited caps; it cannot silently clear an approval hold.
+
+- Mission 06: quota waiting is a separate persistent state, not a human approval. Automatic resume and any model availability probe require authorization in the original mission definition; time and invocation budgets include waiting/probes.
+- Provider auth status cannot establish quota capacity. Prefer existing actual-response evidence; otherwise use an authorized minimal probe under conservative global frequency/backoff/check caps. Never parse prose reset claims.
+- Bind auto-resume to scope/code/content; atomically persist probe recovery and use the same writer lock. LaunchAgent configuration is generated and validated only; persistent install/enable requires separate explicit user approval.

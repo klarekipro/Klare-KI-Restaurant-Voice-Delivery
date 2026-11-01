@@ -145,6 +145,24 @@ class QuotaTests(unittest.TestCase):
         resumed=r.Engine(self.store,p,lambda *a:subprocess.CompletedProcess([],0,'',''));scheduler.tick(resumed,due+2)
         self.assertEqual(self.state(m),'COMPLETED');self.assertEqual(len(p.probe_calls),1);self.assertEqual(len(p.calls),3)
 
+    def test_validated_partial_checkpoint_survives_quota_restart(self):
+        class PartialProvider(Provider):
+            def execute(self,provider,*args):
+                if not self.calls:
+                    path=Path(args[0])/'app';path.mkdir();(path/'partial.py').write_text('preserved = True\n')
+                return super().execute(provider,*args)
+        p=PartialProvider(response(limited=True),response(),response())
+        e,m=self.setup_engine(p,allow_edits=True,fallback=False,auto_resume_quota=True,quota_probe_authorized=True,max_seconds=7200,max_invocations=6)
+        e.drive(m);self.assertEqual(self.state(m),'WAITING_QUOTA')
+        due=self.store.c.execute('SELECT next_check FROM quota_waits WHERE mission=?',(m,)).fetchone()[0]
+        work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0])
+        self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite')
+        resumed=r.Engine(self.store,p,lambda *a:subprocess.CompletedProcess([],0,'',''));scheduler.tick(resumed,due+1)
+        self.assertEqual(self.state(m),'COMPLETED');self.assertEqual((work/'app/partial.py').read_text(),'preserved = True\n')
+        self.assertEqual(len(r.git(work,'log','--format=%s','--grep=Runner validated checkpoint').splitlines()),1)
+        count=self.store.c.execute('SELECT COUNT(*) FROM attempts').fetchone()[0];scheduler.tick(resumed,due+10000)
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM attempts').fetchone()[0],count)
+
     def test_launchagent_roundtrip_and_activation_guard(self):
         e,m,p,due=self.waiting();script=Path(r.__file__).resolve();args=SimpleNamespace(command='scheduler',mission='generate',output=str(self.root/'generated.plist'),authorize_activation=None)
         scheduler.command(e,args,script);config=plistlib.loads(Path(args.output).read_bytes())
@@ -158,9 +176,12 @@ class QuotaTests(unittest.TestCase):
         with patch.object(Path,'home',return_value=home):
             scheduler.command(e,args,Path(r.__file__).resolve())
             args.authorize_activation='TEST authorization only; fake HOME and mocked launchctl'
-            with patch.object(scheduler.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'','')) as launch:
+            with patch.object(scheduler.subprocess,'run',side_effect=lambda argv,**kwargs:subprocess.CompletedProcess(argv,1 if argv[1]=='print' else 0,'','')) as launch:
                 for action in ('install','enable','disable','uninstall'):
-                    args.mission=action;scheduler.command(e,args,Path(r.__file__).resolve())
+                    args.mission=action
+                    if action in ('disable','uninstall'):
+                        with patch.dict(scheduler.os.environ,{'PATH':'/different/operator/path'}):scheduler.command(e,args,Path(r.__file__).resolve())
+                    else:scheduler.command(e,args,Path(r.__file__).resolve())
                 self.assertFalse((home/'Library/LaunchAgents'/f'{scheduler.LABEL}.plist').exists())
                 self.assertTrue(launch.called)
 
