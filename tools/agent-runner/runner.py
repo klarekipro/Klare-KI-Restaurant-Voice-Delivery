@@ -70,7 +70,12 @@ def profile(worktree,scratch,network=True):
         found=shutil.which(cli)
         if found: paths.add(Path(found).resolve().parent.parent)
     # Deny all user-home reads; explicitly open only this task and installed runtime.
-    text='(version 1)(allow default)(deny file-read* (subpath "/Users"))(deny file-write*)'
+    text='(version 1)(allow default)(deny file-read*)(allow file-read-metadata)(deny file-write*)'
+    for system in ('/usr','/bin','/sbin','/System','/Library','/opt/homebrew','/private/etc','/private/var/db','/dev'):
+        text+=f'(allow file-read* (subpath {q(system)}))'
+    for flag in ('--git-dir','--git-common-dir'):
+        path=Path(git(worktree,'rev-parse',flag))
+        paths.add(path if path.is_absolute() else Path(worktree)/path)
     for path in paths|{Path(worktree),Path(scratch)}: text+=f'(allow file-read* (subpath {q(path)}))'
     for path in (worktree,scratch): text+=f'(allow file-write* (subpath {q(path)}))'
     text+='(allow file-write* (literal "/dev/null") (literal "/dev/tty"))'
@@ -170,7 +175,9 @@ class Engine:
                 if not python.is_file(): raise Hold('validation Python unavailable')
                 with tempfile.TemporaryDirectory(prefix='runner-check-') as tmp:
                     args=[x.replace('{python}',str(python)) for x in CHECKS[name]]
-                    r=run(['sandbox-exec','-p',profile(work,tmp,False),*args],work,timeout=120)
+                    remaining=d.get('max_seconds',600)-(time.time()-self.c.execute('SELECT started FROM missions WHERE id=?',(m,)).fetchone()[0])
+                    if remaining<=0: raise Hold('mission duration exhausted')
+                    r=run(['sandbox-exec','-p',profile(work,tmp,False),*args],work,timeout=min(120,remaining))
             self.c.execute('INSERT INTO tests(mission,attempt,name,passed,exit_code,output) VALUES(?,?,?,?,?,?)',(m,a,name,int(r.returncode==0),r.returncode,(r.stdout+r.stderr)[-12000:]));ok &= r.returncode==0
         return ok and bool(d.get('checks'))
     def step(self,m):
@@ -215,6 +222,11 @@ class Engine:
         if control['state']=='CANCELLED' or control['paused']:
             self.c.execute("UPDATE attempts SET state='FAILED',error='operator stopped or paused after bounded invocation' WHERE id=?",(a,))
             if control['state']!='CANCELLED': self.s.hold(m,'paused invocation outcome preserved; inspect before continuing')
+            return False
+        if r['exit_code'] and ('Not logged in' in r.get('error','') or 'authentication' in r.get('error','').lower()):
+            self.c.execute("UPDATE attempts SET state='FAILED' WHERE id=?",(a,))
+            self.c.execute("UPDATE tasks SET state='WAITING_APPROVAL' WHERE id=?",(t['id'],))
+            self.s.hold(m,'provider authentication unavailable in isolated HOME; no broad credential access fallback')
             return False
         result=r['result']
         if result and result['status'] in ('approval','limited'):

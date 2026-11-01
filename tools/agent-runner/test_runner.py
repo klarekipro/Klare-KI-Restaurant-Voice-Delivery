@@ -49,6 +49,9 @@ class RunnerTests(unittest.TestCase):
         fake=Fake(response('malformed'));e,m=self.setup_engine(fake,max_retries=0);e.drive(m);self.assertEqual(self.state(m),'FAILED')
     def test_max_attempts(self):
         fake=Fake(response());e,m=self.setup_engine(fake,max_invocations=1);e.drive(m);self.assertEqual(self.state(m),'FAILED');self.assertEqual(len(fake.calls),1)
+    def test_authentication_boundary(self):
+        value=response(exit_code=1);value['error']='Not logged in'
+        e,m=self.setup_engine(Fake(value));e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
     def test_writer_lock(self):
         with self.store.lock():
             with self.assertRaises(r.Hold):
