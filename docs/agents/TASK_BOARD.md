@@ -10,3 +10,6 @@ Remaining, priority order:
 5. Resolve product/legal open questions, failed-delivery recovery UI, dependency upgrade/pinning across supported Python versions.
 
 No permission to merge, deploy or connect real telephony. No human demo acceptance recorded yet.
+
+Mission 04 completed: persistent runner, two real adapters, native/outer isolation probes, actual automatic Claude→Codex review cycle, controlled validators, operator controls, recovery tests and redacted evidence.
+Remaining: actual browser/mobile acceptance; complete preserved simulator repair after provider capacity/inspection; live quota takeover after corrected parser; wider process-termination/race coverage. These remain distinct from the completed review cycle.

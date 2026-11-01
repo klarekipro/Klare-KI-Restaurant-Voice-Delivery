@@ -58,6 +58,24 @@ class RunnerTests(unittest.TestCase):
         fake=Edit(response(),response());e,m=self.setup_engine(fake,allow_edits=True);e.drive(m)
         self.assertEqual(self.state(m),'COMPLETED')
         self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM commits').fetchone()[0],2)
+    def test_limited_dirty_checkpoint_takeover(self):
+        class LimitedEdit(Fake):
+            def execute(self,provider,*args):
+                if not self.calls:
+                    path=Path(args[0])/'app';path.mkdir();(path/'partial.py').write_text('value = 1\n')
+                return super().execute(provider,*args)
+        fake=LimitedEdit(response(limited=True),response());e,m=self.setup_engine(fake,allow_edits=True);e.drive(m)
+        self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],2)
+    def test_recorded_api429_recovery(self):
+        e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0]
+        error='; events: '+json.dumps({'is_error':True,'api_error_status':429})
+        self.store.c.execute("INSERT INTO attempts(task,provider,state,error) VALUES(?,'claude','FAILED',?)",(task,error))
+        self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite')
+        self.assertEqual(self.store.c.execute("SELECT available FROM availability WHERE provider='claude'").fetchone()[0],0)
+    def test_invalid_terminal_transition(self):
+        e,m=self.setup_engine(Fake(response(),response()));e.drive(m)
+        with self.assertRaises(r.Hold):self.store.state(m,'RUNNING')
     def test_execution_crash_holds(self):
         class Crash(Fake):
             def execute(self,*args): raise RuntimeError('synthetic process crash')

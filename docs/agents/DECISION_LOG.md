@@ -8,3 +8,7 @@
 - Use per-actor persisted idempotency key for simulator requests. Browser retains one key for page lifetime; open a new simulator page for a new order. Payload changes under a successful key return 409. Clients without a key are not deduplicated.
 - Count delivered revenue by delivery timestamp in half-open Europe/Berlin calendar windows; average delivered ticket divides by delivered count. Include inactive couriers in history.
 - SQLite BEGIN IMMEDIATE serializes transitions and their audit events. Do not infer distributed/concurrent-load readiness from local tests.
+
+- Mission 04: runner is a separate stdlib component under tools/agent-runner, based on PR3. macOS backend only, fail closed elsewhere. Native Codex profiles avoid incompatible nested Seatbelt. Source: https://learn.chatgpt.com/docs/config-file/config-reference.
+- Provider statements are task-scoped evidence; runner requires schema and external checks. Review completion is not product readiness. New dependencies/configuration and uncertain dirty outcomes require approval.
+- Partial real repair stopped at machine API429 and is preserved, not published. Historical approval holds are never silently cleared by upgraded code.

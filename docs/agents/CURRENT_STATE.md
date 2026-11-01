@@ -1,19 +1,16 @@
-# Current state — Mission 03
+# Current state — Mission 04
 
-Active agent: Codex; ready for manual handoff. Branch: `feat/codex-mvp-hardening`. Worktree: `/Users/admin/Projects/restaurant-codex-hardening`; original MVP worktree remains separate. Source: `f73b97b76f7ab0694aa1fbb0a8f87c0d73e260bb`. Validated implementation: `77847504a3351d667182b88469a94b518e29cd01`. This state record is committed separately; resolve its final SHA using `git rev-parse HEAD` and compare with origin before takeover.
+Active implementation: feat/local-agent-runner, separate worktree /Users/admin/Projects/restaurant-agent-runner. Source PR3: 7b13ba55f66c7214143dc00aadbca8435a0a1d05. Resolve final handoff commit with git rev-parse HEAD and compare origin before writing. Existing MVP and hardening worktrees were not modified.
 
-Draft PR: https://github.com/klarekipro/Klare-KI-Restaurant-Voice-Delivery/pull/3
-Base: `feat/mvp-restaurant-voice`; do not merge automatically. No production/telephony approval.
+Runner entry: python3 tools/agent-runner/runner.py. Read tools/agent-runner/README.md and outputs/codex/mission-04/VALIDATION.md. Current mission state lives in ignored .agent-runner/state.sqlite. Model/provider changes must continue from records, not assumptions.
 
-Validated commands in isolated local Python 3.14 venv:
-- `python3 -m venv .venv`
-- `.venv/bin/pip install -r requirements.txt` — succeeded; actual installed versions in requirements-local.lock.
-- `.venv/bin/python -m pytest -q` — baseline 5 passed; hardened 22 passed, one Starlette/httpx deprecation warning.
-- `.venv/bin/python -m pip check` — no broken requirements.
-- `.venv/bin/python scripts/local_acceptance.py` — PASS actual HTTP lifecycle and Uvicorn process restart, temporary synthetic SQLite.
-- `.venv/bin/python -m compileall -q app scripts tests` — passed.
-- `git diff --check` — passed for new changes.
+Real review 3ca428d18423: COMPLETED, Claude→Codex with automatic handoff and external compile checks; two attempts unchanged after separate-process resume. Real repair 92bd71a914ab: WAITING_APPROVAL following API429 with partial uncommitted template change. Preserve .agent-runner/worktrees/92bd71a914ab; no destructive cleanup. Its hash is recorded in real-limit-hold.json. Claude availability is unavailable with unknown machine retry timestamp. Historical holds are not automatically approved.
 
-No unresolved test failures. Initial development failures in secret-file opening and SQL placeholder count were fixed; see validation report. No credentials/databases/session secrets tracked. Intentionally ignored: `.venv`, bytecode/test caches, local DB/WAL/SHM and generated signing-secret files. No other uncommitted/untracked files expected after final handoff commit; receiving agent must verify. Acceptance server is terminated by the script.
+Validation commands:
+- python3 -m unittest discover -s tools/agent-runner -p 'test_*.py' -q — 23 passed.
+- Prepared project .venv from requirements-local.lock; original 22 app tests and scripts/local_acceptance.py passed in isolated loopback-only validation.
+- `.venv/bin/python -m pytest -q` — 22 application tests passed (default pytest discovery excludes tools); runner suite is run separately. `.venv/bin/python -m pip check` and `git diff --check` passed. One existing Starlette/httpx deprecation warning remains.
 
-Next agent: independently reproduce these commands, review diffs against MVP, then browser-test login and complete delivery at kitchen/courier mobile widths. Check retry/error feedback; add order-specific address correction to snapshot data if required. Keep synthetic data and local-only binding. TASK_BOARD lists security/pilot gaps and migration limitations. Browser and physical-device behavior, external map execution, concurrency load and pilot readiness remain unverified. Supervised local API demonstration is reproduced; human browser-demo signoff is pending.
+Intentionally ignored: state SQLite/WAL/lock, private mission worktrees, .venv and caches. No DB/auth material committed. Main feature worktree should be clean after publication; receiving agent must verify actual status and remote SHA. Do not merge automatically or expose demo passwords publicly.
+
+Next task: review runner security/state transitions and evidence independently. Inspect the preserved repair before operator approval or a new authorized continuation; use Codex if Claude capacity is still exhausted. Add safely scoped browser/mobile acceptance; neither HTTP nor compile checks constitute browser verification. Complete deferred application tasks listed in TASK_BOARD.

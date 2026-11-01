@@ -18,6 +18,14 @@ import uuid
 
 SCHEMA = {'type':'object','properties':{'status':{'type':'string','enum':['done','repair','approval','limited']},'summary':{'type':'string'},'findings':{'type':'array','items':{'type':'string'}}},'required':['status','summary','findings'],'additionalProperties':False}
 STATES = {'QUEUED','RUNNING','VALIDATING','COMPLETED','RETRYABLE_FAILURE','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'}
+EDGES = {
+ 'QUEUED': {'RUNNING','FAILED','WAITING_APPROVAL','CANCELLED'},
+ 'RUNNING': {'VALIDATING','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'VALIDATING': {'QUEUED','RETRYABLE_FAILURE','COMPLETED','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'RETRYABLE_FAILURE': {'RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'PROVIDER_LIMITED': {'RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'WAITING_APPROVAL': {'QUEUED','CANCELLED'}, 'FAILED': set(), 'COMPLETED': set(), 'CANCELLED': set()
+}
 CHECKS = {'compile': ['{python}','-m','compileall','-q','app'], 'pytest':['{python}','-m','pytest','-q'], 'acceptance':['{python}','scripts/local_acceptance.py']}
 DDL = '''
 CREATE TABLE IF NOT EXISTS missions(id TEXT PRIMARY KEY,state TEXT,definition TEXT,worktree TEXT,started REAL,paused INTEGER DEFAULT 0);
@@ -47,11 +55,23 @@ class Store:
         self.c=sqlite3.connect(self.path,timeout=10,isolation_level=None);self.c.row_factory=sqlite3.Row
         os.chmod(self.path,0o600)
         self.c.execute('PRAGMA journal_mode=WAL');self.c.executescript(DDL)
+        # Recover machine evidence from early runner versions without clearing approval holds.
+        for row in self.c.execute("SELECT id,provider,error FROM attempts WHERE error LIKE '%; events: %'").fetchall():
+            try: envelope=json.loads(row['error'].split('; events: ',1)[1])
+            except (ValueError,IndexError): continue
+            if envelope.get('is_error') is True and envelope.get('api_error_status')==429:
+                self.c.execute("INSERT OR IGNORE INTO availability VALUES(?,0,'confirmed API 429; retry time unknown',NULL)",(row['provider'],))
+                self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(row['id'],))
+
     def event(self,m,event,detail=''):
         self.c.execute('INSERT INTO events(mission,at,event,detail) VALUES(?,?,?,?)',(m,time.time(),event,str(detail)))
     def state(self,m,state):
         assert state in STATES
-        self.c.execute('UPDATE missions SET state=? WHERE id=?',(state,m));self.event(m,state)
+        previous=self.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0]
+        if state!=previous and state not in EDGES[previous]: raise Hold(f'invalid or concurrent transition {previous} -> {state}')
+        changed=self.c.execute('UPDATE missions SET state=? WHERE id=? AND state=?',(state,m,previous)).rowcount
+        if not changed: raise Hold('concurrent operator state change')
+        self.event(m,state)
     def hold(self,m,why):
         self.c.execute('INSERT INTO approvals(mission,reason) VALUES(?,?)',(m,why));self.state(m,'WAITING_APPROVAL');self.event(m,'approval_required',why)
     @contextlib.contextmanager
@@ -164,7 +184,7 @@ class CLIProvider:
                 envelope=json.loads(stdout);usage={k:envelope[k] for k in ('usage','total_cost_usd') if k in envelope}
                 result=envelope.get('structured_output')
                 # Only documented machine error codes; unknown nonzero exits are not limits.
-                limited=envelope.get('error')=='rate_limit_error'
+                limited=envelope.get('error')=='rate_limit_error' or (envelope.get('is_error') is True and envelope.get('api_error_status')==429)
                 if envelope.get('is_error'): error=str(envelope.get('result','provider error'))[-2000:]
             else:
                 for line in stdout.splitlines():
@@ -268,8 +288,17 @@ class Engine:
             other='codex' if t['provider']=='claude' else 'claude'
             available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
             if d.get('fallback',False) and (not available or available[0]):
-                if git(work,'status','--porcelain'): self.s.hold(m,'limited provider left uncommitted work; preserved');return False
-                self.c.execute("UPDATE tasks SET state='PROVIDER_LIMITED' WHERE id=?",(t['id'],));self.task(m,other,t['kind'],t['prompt'],t['retries']);return True
+                if git(work,'status','--porcelain'):
+                    changed=git(work,'diff','--name-only').splitlines()+git(work,'ls-files','--others','--exclude-standard').splitlines()
+                    import re
+                    safe=d.get('allow_edits',False) and all(Path(x).parts[0]=='app' and not (work/x).is_symlink() and (work/x).resolve().is_relative_to(work.resolve()) for x in changed)
+                    safe=safe and all(not re.search(r'-----BEGIN .*PRIVATE KEY|(?:ghp_|sk-live-|sk-proj-)[A-Za-z0-9_-]{16,}',(work/x).read_text(errors='replace')) for x in changed if (work/x).exists())
+                    if not safe: self.s.hold(m,'limited provider left changes outside checkpoint policy; preserved');return False
+                    git(work,'add','--',*changed)
+                    git(work,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Local Agent Runner','-c','user.email=runner@example.invalid','commit','-m','Unvalidated provider-limit checkpoint; continuation required')
+                    sha=git(work,'rev-parse','HEAD');self.c.execute('INSERT INTO commits(mission,sha,attempt) VALUES(?,?,?)',(m,sha,a));self.s.event(m,'unvalidated_checkpoint',sha)
+
+                self.c.execute("UPDATE tasks SET state='PROVIDER_LIMITED' WHERE id=?",(t['id'],));task=self.task(m,other,t['kind'],t['prompt']+'\nPrevious provider reached a confirmed limit. HEAD may contain an UNVALIDATED checkpoint; inspect and finish it before reporting done.',t['retries']);self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,task,json.dumps({'reason':'confirmed limit','retry_at':None})));return True
             self.s.hold(m,'provider limited; no permitted available fallback');return False
         control=self.c.execute('SELECT state,paused FROM missions WHERE id=?',(m,)).fetchone()
         if control['state']=='CANCELLED' or control['paused']:
