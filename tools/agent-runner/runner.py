@@ -80,7 +80,7 @@ def profile(worktree,scratch,network=True):
     for path in paths|{Path(worktree),Path(scratch)}: text+=f'(allow file-read* (subpath {q(path)}))'
     for path in (worktree,scratch): text+=f'(allow file-write* (subpath {q(path)}))'
     text+='(allow file-write* (literal "/dev/null") (literal "/dev/tty"))'
-    if not network: text+='(deny network*)'
+    if not network: text+='(deny network*)(allow network-outbound (remote ip "localhost:*"))(allow network-bind (local ip "localhost:*"))(allow network-inbound (local ip "localhost:*"))'
     return text
 
 

@@ -5,8 +5,11 @@
   "provider": "claude",
   "fallback": true,
   "allow_edits": true,
-  "checks": ["pytest", "acceptance"],
-  "python": "/Users/admin/Projects/restaurant-codex-hardening/.venv/bin/python",
+  "checks": [
+    "pytest",
+    "acceptance"
+  ],
+  "python": ".venv/bin/python",
   "max_invocations": 3,
   "max_retries": 0,
   "max_failures": 2,
