@@ -12,3 +12,8 @@
 - Mission 04: runner is a separate stdlib component under tools/agent-runner, based on PR3. macOS backend only, fail closed elsewhere. Native Codex profiles avoid incompatible nested Seatbelt. Source: https://learn.chatgpt.com/docs/config-file/config-reference.
 - Provider statements are task-scoped evidence; runner requires schema and external checks. Review completion is not product readiness. New dependencies/configuration and uncertain dirty outcomes require approval.
 - Partial real repair stopped at machine API429 and is preserved, not published. Historical approval holds are never silently cleared by upgraded code.
+
+- Mission 05: preserve the original held tree; import recorded API429/task/bytes into a new authorized worktree. Safety-checked incomplete checkpoints and verified completed tasks have distinct classifications. No unvalidated checkpoint commits.
+- Normalized outcomes, content-bound receipts, atomic unique handoffs and committed-tree identity support replay across interrupted handoffs. Unknown process outcomes still hold.
+- Explicit safety checks may differ from final completion checks; final acceptance and independent-context review remain mandatory. Same-provider review fallback is opt-in and logged.
+- A failed bounded mission is terminal. A new explicitly authorized follow-up forwards structured findings, preserving source records and inherited caps; it cannot silently clear an approval hold.

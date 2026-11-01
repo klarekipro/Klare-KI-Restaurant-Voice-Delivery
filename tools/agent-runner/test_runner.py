@@ -149,12 +149,62 @@ e.checkpoint_hook=crash;e.drive(sys.argv[3])
         target=r.Store(self.root/'recovery/state.sqlite')
         try:
             resumed=r.Engine(target,Fake(response(),response()),lambda *a:subprocess.CompletedProcess([],0,'',''))
-            m=resumed.import_held(self.store.path,old,'explicit test recovery authorization',__import__('sys').executable)
-            self.assertEqual(resumed.import_held(self.store.path,old,'explicit retry',__import__('sys').executable),m)
+            with self.assertRaises(r.Hold): resumed.import_held(self.store.path,old,'scope test',__import__('sys').executable,repo=Path(r.__file__).parents[2])
+            m=resumed.import_held(self.store.path,old,'explicit test recovery authorization',__import__('sys').executable,repo=self.repo)
+            self.assertEqual(resumed.import_held(self.store.path,old,'explicit retry',__import__('sys').executable,repo=self.repo),m)
             resumed.drive(m);self.assertEqual(target.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0],'COMPLETED')
             self.assertEqual(e.fingerprint(origin),before);self.assertEqual(self.state(old),'WAITING_APPROVAL')
             self.assertEqual(target.c.execute('SELECT COUNT(*) FROM missions').fetchone()[0],1)
         finally:target.c.close()
+
+    def test_followup_is_bounded_and_idempotent(self):
+        e,m=self.setup_engine(Fake(response(),response('repair')),max_retries=0);e.drive(m);self.assertEqual(self.state(m),'FAILED')
+        fake=Fake(response(),response());e.provider=fake
+        next_id=e.followup(m,'explicit test authorization')
+        self.assertEqual(e.followup(m,'same authorization'),next_id)
+        e.drive(next_id);self.assertEqual(self.state(next_id),'COMPLETED');self.assertEqual(fake.calls,['claude','codex'])
+    def test_change_after_validation_prevents_commit(self):
+        e,m,fake=self.limited_edit()
+        def mutate(phase):
+            if phase=='VALIDATED':
+                work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0]);(work/'app/partial.py').write_text('changed after validation')
+        e.checkpoint_hook=mutate;e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM commits').fetchone()[0],0)
+
+    def test_restart_after_implementation_before_review_queue(self):
+        e,m=self.setup_engine(Fake(response(),response()))
+        def crash(phase):
+            if phase=='IMPLEMENTATION_RECORDED':raise SystemExit('crash')
+        e.checkpoint_hook=crash
+        with self.assertRaises(SystemExit):e.step(m)
+        self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite');fake=Fake(response())
+        r.Engine(self.store,fake,lambda *a:subprocess.CompletedProcess([],0,'','')).drive(m)
+        self.assertEqual(fake.calls,['codex']);self.assertEqual(self.state(m),'COMPLETED')
+    def test_restart_after_review_before_finalization(self):
+        fake=Fake(response(),response());e,m=self.setup_engine(fake);e.step(m)
+        def crash(phase):
+            if phase=='REVIEW_RECORDED':raise SystemExit('crash')
+        e.checkpoint_hook=crash
+        with self.assertRaises(SystemExit):e.step(m)
+        self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite');empty=Fake()
+        r.Engine(self.store,empty).drive(m);self.assertFalse(empty.calls);self.assertEqual(self.state(m),'COMPLETED')
+        self.assertEqual(self.store.c.execute('SELECT classification FROM deliveries').fetchone()[0],'verified-task-complete')
+
+    def test_untrusted_checkpoint_path_holds(self):
+        class DependencyEdit(Fake):
+            def execute(self,provider,*args):
+                (Path(args[0])/'requirements.txt').write_text('unreviewed-package')
+                return super().execute(provider,*args)
+        e,m=self.setup_engine(DependencyEdit(response(limited=True)),allow_edits=True);e.drive(m)
+        self.assertEqual(self.state(m),'WAITING_APPROVAL');self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],0)
+    def test_checkpoint_symlink_is_not_read_or_committed(self):
+        target=self.root/'outside.txt';target.write_text('synthetic outside canary')
+        class SymlinkEdit(Fake):
+            def execute(self,provider,*args):
+                path=Path(args[0])/'app';path.mkdir();(path/'partial.py').symlink_to(target)
+                return super().execute(provider,*args)
+        e,m=self.setup_engine(SymlinkEdit(response(limited=True)),allow_edits=True);e.drive(m)
+        self.assertEqual(self.state(m),'WAITING_APPROVAL');self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM commits').fetchone()[0],0)
 
     def test_recorded_api429_recovery(self):
         e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0]

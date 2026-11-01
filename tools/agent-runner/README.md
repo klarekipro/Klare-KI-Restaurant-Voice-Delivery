@@ -27,3 +27,23 @@ Authentication may fail in the clean HOME; runner must hold or fail rather than 
 Native Codex profile reference: https://learn.chatgpt.com/docs/config-file/config-reference (`permissions.<name>.filesystem`, `default_permissions`). Scope is verified with a negative filesystem probe before each invocation. Tests of mocked outcomes do not establish live provider-limit behavior.
 
 For the bounded demo repair, prepare the reviewed existing test dependencies with `python3 -m venv .venv && .venv/bin/pip install -r requirements-local.lock`, then `python3 tools/agent-runner/runner.py start tools/agent-runner/fix-demo.json`. The Python path is relative to the operator working directory; use a reviewed project venv, never an untrusted executable. This mission authorizes only the requested template repair.
+
+
+## Validated takeover and recovery (Mission 05)
+
+Checkpoint stages are PRESERVED → VALIDATED → COMMITTED → HANDED_OFF. Incomplete work is never labelled complete. Before commit/handoff, scope and key checks, a full content fingerprint and controlled external checks must pass. `checkpoint_checks` selects explicitly trusted safety checks (default: all mission checks); completion still requires all `checks` plus a fresh review and matching validation receipt. The shipped historical recovery uses pytest + HTTP acceptance as safety checks, and adds the simulator retry behavior check for completion. A failed safety check or changed fingerprint holds without committing. Missing provider final JSON is not evidence of completed work.
+
+SQLite stores normalized outcomes before scheduling. Checkpoint replay recognizes an already-created Git commit using its parent, marker and full committed-content digest; task/handoff creation is atomic and unique per attempt. Unknown in-flight executions still hold; no PID or approval protections are removed. A test kills a real runner process with os._exit between Git commit and SQLite recording and verifies one commit, no lost bytes and no repeated provider action after restart.
+
+To recover the historical held mission, explicitly authorize a separate import; the original worktree and approval hold remain untouched:
+
+```
+python3 tools/agent-runner/runner.py recover-held 92bd71a914ab \
+  --from-state /absolute/path/to/original/.agent-runner/state.sqlite \
+  --python /absolute/path/to/reviewed/.venv/bin/python \
+  --approval-note "Explicit recovery authorization and scope"
+```
+
+No manual prompt/report copying is required: SQLite records, original bytes and machine API429 evidence are imported automatically. Repeated imports return the same new mission; an incomplete construction holds rather than creating a duplicate. Inherited duration/invocation/retry caps are preserved. A new follow-up after a review rejects a result requires explicit authorization: `followup <failed-mission-id> --approval-note "authority and bounded scope"`. It forwards structured findings automatically and does not reopen or reset the failed mission. It cannot clear WAITING_APPROVAL.
+
+If authorized with `review_fallback: true`, an available provider may perform a fresh independent-context review when the other provider is unavailable. This is logged as same-provider review, never described as cross-provider review. External checks remain mandatory. Browser/mobile testing is not claimed by the Node DOM-stub check.

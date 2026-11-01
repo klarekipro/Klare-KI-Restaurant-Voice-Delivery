@@ -56,7 +56,9 @@
 </section>
 
 <script>
-const submissionKey = crypto.randomUUID();
+let submissionKey = crypto.randomUUID();
+let submissionBody = null;
+let inFlight = false;
 const menu = {{ menu | map(attribute='id') | list | tojson }};
 
 function recalcTotal() {
@@ -96,39 +98,77 @@ document.getElementById('lookup-btn').addEventListener('click', async () => {
 });
 
 document.getElementById('submit-btn').addEventListener('click', async () => {
-  const items = [];
-  document.querySelectorAll('.qty').forEach(inp => {
-    const q = parseInt(inp.value || "0", 10);
-    if (q > 0) items.push({ menu_item_id: parseInt(inp.dataset.menuId, 10), qty: q });
-  });
-  const payload = {
-    phone: document.getElementById('phone').value.trim(),
-    name: document.getElementById('name').value.trim(),
-    address: {
-      street: document.getElementById('street').value.trim(),
-      house_number: document.getElementById('house_number').value.trim(),
-      plz: document.getElementById('plz').value.trim(),
-      city: document.getElementById('city').value.trim(),
-      notes: document.getElementById('notes').value.trim(),
-    },
-    items: items,
-  };
-  const resEl = document.getElementById('submit-result');
-  resEl.textContent = 'Sende…';
-  const r = await fetch('/call/submit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': submissionKey },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    resEl.textContent = 'Fehler: ' + t;
-    return;
+  if (inFlight) return;
+  if (submissionBody === null) {
+    const items = [];
+    document.querySelectorAll('.qty').forEach(inp => {
+      const q = parseInt(inp.value || "0", 10);
+      if (q > 0) items.push({ menu_item_id: parseInt(inp.dataset.menuId, 10), qty: q });
+    });
+    const payload = {
+      phone: document.getElementById('phone').value.trim(),
+      name: document.getElementById('name').value.trim(),
+      address: {
+        street: document.getElementById('street').value.trim(),
+        house_number: document.getElementById('house_number').value.trim(),
+        plz: document.getElementById('plz').value.trim(),
+        city: document.getElementById('city').value.trim(),
+        notes: document.getElementById('notes').value.trim(),
+      },
+      items: items,
+    };
+    submissionBody = JSON.stringify(payload);
   }
-  const data = await r.json();
-  resEl.innerHTML = '<p class="ok">Bestellung #' + data.order_id +
-    ' erstellt (CRM: ' + data.crm_match_status + ', Call ' + data.call_id + '). ' +
-    '<a href="/confirmer/' + data.order_id + '">Zur Prüfung öffnen</a>.</p>';
+  const resEl = document.getElementById('submit-result');
+  const btn = document.getElementById('submit-btn');
+  resEl.textContent = 'Sende…';
+  btn.disabled = true;
+  inFlight = true;
+  try {
+    const r = await fetch('/call/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': submissionKey },
+      body: submissionBody,
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      resEl.textContent = 'Fehler: ' + t;
+      btn.disabled = false;
+      inFlight = false;
+      return;
+    }
+    const data = await r.json();
+    const confirmation = document.createElement('p');
+    confirmation.className = 'ok';
+    confirmation.textContent = 'Bestellung #' + data.order_id +
+      ' erstellt (CRM: ' + data.crm_match_status + ', Call ' + data.call_id + '). ';
+    const reviewLink = document.createElement('a');
+    reviewLink.href = '/confirmer/' + encodeURIComponent(data.order_id);
+    reviewLink.textContent = 'Zur Prüfung öffnen';
+    confirmation.append(reviewLink);
+    const newOrderBtn = document.createElement('button');
+    newOrderBtn.type = 'button';
+    newOrderBtn.id = 'new-order-btn';
+    newOrderBtn.className = 'secondary';
+    newOrderBtn.textContent = 'Neue Bestellung';
+    resEl.replaceChildren(confirmation, newOrderBtn);
+    newOrderBtn.addEventListener('click', () => {
+      const nextSubmissionKey = crypto.randomUUID();
+      document.getElementById('caller-form').reset();
+      document.querySelectorAll('.qty').forEach(inp => { inp.value = '0'; });
+      recalcTotal();
+      document.getElementById('lookup-result').textContent = '';
+      resEl.textContent = '';
+      submissionKey = nextSubmissionKey;
+      submissionBody = null;
+      btn.disabled = false;
+      inFlight = false;
+    });
+  } catch (err) {
+    resEl.textContent = 'Netzwerkfehler: ' + err.message;
+    btn.disabled = false;
+    inFlight = false;
+  }
 });
 </script>
 {% endblock %}
