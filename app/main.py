@@ -4,6 +4,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
+import sqlite3
+import hashlib
+from datetime import timedelta, timezone
+from zoneinfo import ZoneInfo
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -14,6 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import auth, db, orders, seed
 from .voice.simulator import SimulatorVoiceProvider
@@ -24,10 +30,24 @@ STATIC_DIR = BASE_DIR / "static"
 
 VOICE = SimulatorVoiceProvider()
 
-SESSION_SECRET = os.environ.get(
-    "KLARE_SESSION_SECRET",
-    "dev-only-secret-change-me-in-every-non-local-environment",
-)
+def session_secret():
+    configured = os.environ.get("KLARE_SESSION_SECRET")
+    if configured:
+        return configured
+    path = db.db_path().with_suffix(".session-secret")
+    try:
+        with open(path, "x", opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
+            f.write(secrets.token_hex(32))
+    except FileExistsError:
+        pass
+    return path.read_text().strip()
+
+
+def report_window(days=1):
+    today = datetime.now(ZoneInfo("Europe/Berlin")).date()
+    start = datetime.combine(today - timedelta(days=days-1), datetime.min.time(), ZoneInfo("Europe/Berlin"))
+    end = datetime.combine(today + timedelta(days=1), datetime.min.time(), ZoneInfo("Europe/Berlin"))
+    return tuple(t.astimezone(timezone.utc).replace(tzinfo=None).isoformat(" ") for t in (start, end))
 
 
 def _format_cents(cents: int) -> str:
@@ -41,7 +61,21 @@ TEMPLATES.env.filters["cents"] = _format_cents
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Klare KI Restaurant MVP", version="0.1.0")
-    app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, max_age=60 * 60 * 12)
+    app.add_middleware(SessionMiddleware, secret_key=session_secret(), max_age=60 * 60 * 12)
+    @app.middleware("http")
+    async def local_boundary(request, call_next):
+        # Reject cross-origin browser writes (including login CSRF).
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = request.headers.get("origin")
+            if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
+                return Response("cross-origin write denied", status_code=403)
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     db.init_db()
@@ -51,6 +85,10 @@ def create_app() -> FastAPI:
     @app.exception_handler(orders.StateError)
     def _state_error(request: Request, exc: orders.StateError):
         return Response(status_code=409, content=str(exc))
+
+    @app.exception_handler(sqlite3.IntegrityError)
+    def integrity_error(request, exc):
+        return Response("conflicting or invalid data", status_code=409)
 
     def ctx(request: Request, **extra) -> dict:
         base = {
@@ -82,6 +120,7 @@ def create_app() -> FastAPI:
             return TEMPLATES.TemplateResponse(request, "login.html", ctx(request, error="Login fehlgeschlagen."),
                 status_code=400,
             )
+        request.session.clear()
         request.session["uid"] = user.id
         return RedirectResponse(_home_for(user.role), status_code=303)
 
@@ -111,6 +150,8 @@ def create_app() -> FastAPI:
                     description: str = Form(""),
                     price_eur: str = Form(...),
                     user: auth.User = Depends(auth.require_strict("owner"))):
+        if not name.strip() or len(name) > 120:
+            raise HTTPException(400, "invalid menu name")
         price_cents = _parse_price(price_eur)
         conn = db.connect()
         try:
@@ -219,8 +260,13 @@ def create_app() -> FastAPI:
     @app.post("/call/submit")
     async def call_submit(request: Request,
                           user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
-        payload = await request.json()
-        return _submit_call_payload(payload, actor_user_id=user.id)
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise HTTPException(400, "invalid JSON")
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "expected object")
+        return _submit_call_payload(payload, actor_user_id=user.id, request_key=request.headers.get("Idempotency-Key"))
 
     # ---------- confirmer ----------
 
@@ -232,7 +278,7 @@ def create_app() -> FastAPI:
             rows = conn.execute(
                 "SELECT o.id, o.status, o.total_cents, o.created_at, "
                 "       c.name AS customer_name, c.phone AS customer_phone "
-                "FROM orders o LEFT JOIN customers c ON o.customer_id = c.id "
+                "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.status IN ('new','confirmed','in_kitchen','ready') "
                 "ORDER BY o.created_at DESC"
             ).fetchall()
@@ -263,7 +309,9 @@ def create_app() -> FastAPI:
                           user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM order_items WHERE order_id=?", (order_id,)).fetchone():
+                raise HTTPException(400, "cannot approve an empty order")
             orders.transition(conn, order_id, "confirmed", actor_user_id=user.id)
             conn.execute(
                 "UPDATE orders SET confirmer_user_id = ? WHERE id = ?",
@@ -293,7 +341,7 @@ def create_app() -> FastAPI:
                          user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "UPDATE orders SET reject_reason = ? WHERE id = ?",
                 (reason.strip(), order_id),
@@ -313,12 +361,14 @@ def create_app() -> FastAPI:
                             item_id: int = Form(...),
                             qty: int = Form(...),
                             user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
-        if qty < 0:
+        if not 0 <= qty <= 100:
             raise HTTPException(400, "qty must be >= 0")
         _require_state(order_id, "new")
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT status FROM orders WHERE id=?", (order_id,)).fetchone()["status"] != "new":
+                raise HTTPException(409, "order is no longer editable")
             if qty == 0:
                 conn.execute(
                     "DELETE FROM order_items WHERE id = ? AND order_id = ?",
@@ -345,7 +395,7 @@ def create_app() -> FastAPI:
                            menu_item_id: int = Form(...),
                            qty: int = Form(1),
                            user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
-        if qty < 1:
+        if not 1 <= qty <= 100:
             raise HTTPException(400, "qty must be >= 1")
         _require_state(order_id, "new")
         conn = db.connect()
@@ -356,7 +406,9 @@ def create_app() -> FastAPI:
             ).fetchone()
             if not row:
                 raise HTTPException(400, "unknown or unavailable menu item")
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT status FROM orders WHERE id=?", (order_id,)).fetchone()["status"] != "new":
+                raise HTTPException(409, "order is no longer editable")
             conn.execute(
                 "INSERT INTO order_items "
                 "(order_id, menu_item_id, name_snapshot, qty, unit_price_cents) "
@@ -367,8 +419,6 @@ def create_app() -> FastAPI:
             orders.log_event(conn, order_id, "item.added", user.id,
                              f"menu_item_id={row['id']} qty={qty}")
             conn.execute("COMMIT")
-        except HTTPException:
-            raise
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -423,11 +473,13 @@ def create_app() -> FastAPI:
                       user: auth.User = Depends(auth.require_strict("owner", "kitchen"))):
         conn = db.connect()
         try:
+            conn.execute("BEGIN IMMEDIATE")
             # Allow going confirmed -> ready directly (skip in_kitchen).
             row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
             if row and row["status"] == "confirmed":
                 orders.transition(conn, order_id, "in_kitchen", actor_user_id=user.id)
             orders.transition(conn, order_id, "ready", actor_user_id=user.id)
+            conn.execute("COMMIT")
         finally:
             conn.close()
         return RedirectResponse("/kitchen", status_code=303)
@@ -441,7 +493,7 @@ def create_app() -> FastAPI:
         try:
             ready = conn.execute(
                 "SELECT o.*, c.name AS customer_name, c.street, c.house_number, c.plz, c.city "
-                "FROM orders o LEFT JOIN customers c ON o.customer_id = c.id "
+                "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.status = 'ready' ORDER BY o.ready_at ASC"
             ).fetchall()
             couriers = conn.execute(
@@ -459,7 +511,7 @@ def create_app() -> FastAPI:
                         user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             crow = conn.execute(
                 "SELECT id FROM users WHERE id = ? AND role = 'courier' AND active = 1",
                 (courier_id,),
@@ -473,8 +525,6 @@ def create_app() -> FastAPI:
             orders.transition(conn, order_id, "assigned",
                               actor_user_id=user.id, detail=f"courier={courier_id}")
             conn.execute("COMMIT")
-        except HTTPException:
-            raise
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -490,19 +540,20 @@ def create_app() -> FastAPI:
             rows = conn.execute(
                 "SELECT o.*, c.name AS customer_first_name, c.street, c.house_number, "
                 "       c.plz, c.city, c.notes AS delivery_notes "
-                "FROM orders o LEFT JOIN customers c ON o.customer_id = c.id "
+                "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.assigned_courier_id = ? AND o.status IN ('assigned','en_route') "
                 "ORDER BY o.assigned_at ASC",
                 (user.id,),
             ).fetchall()
+            start, end = report_window()
             done = conn.execute(
                 "SELECT o.id, o.delivered_at, o.total_cents "
                 "FROM orders o "
                 "WHERE o.assigned_courier_id = ? "
                 "  AND o.status IN ('delivered','closed') "
-                "  AND date(o.delivered_at) = date('now') "
+                "  AND o.delivered_at >= ? AND o.delivered_at < ? "
                 "ORDER BY o.delivered_at DESC",
-                (user.id,),
+                (user.id, start, end),
             ).fetchall()
         finally:
             conn.close()
@@ -546,7 +597,7 @@ def create_app() -> FastAPI:
         conn = db.connect()
         try:
             row = conn.execute(
-                "SELECT c.phone FROM orders o LEFT JOIN customers c ON o.customer_id = c.id "
+                "SELECT c.phone FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.id = ?",
                 (order_id,),
             ).fetchone()
@@ -568,7 +619,7 @@ def create_app() -> FastAPI:
         _ensure_courier_owns(user, order_id)
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             orders.transition(conn, order_id, "delivered", actor_user_id=user.id)
             orders.transition(conn, order_id, "closed", actor_user_id=user.id)
             conn.execute("COMMIT")
@@ -601,18 +652,14 @@ def create_app() -> FastAPI:
         range_ = range_ if range_ in ("today", "7d") else "today"
         conn = db.connect()
         try:
-            if range_ == "today":
-                where = "date(created_at) = date('now')"
-                where_delivered = "date(delivered_at) = date('now')"
-                where_ready = "date(ready_at) = date('now')"
-            else:
-                where = "date(created_at) >= date('now','-6 day')"
-                where_delivered = "date(delivered_at) >= date('now','-6 day')"
-                where_ready = "date(ready_at) >= date('now','-6 day')"
+            start, end = report_window(1 if range_ == "today" else 7)
+            where = f"created_at >= '{start}' AND created_at < '{end}'"
+            where_delivered = f"delivered_at >= '{start}' AND delivered_at < '{end}'"
+            where_ready = f"ready_at >= '{start}' AND ready_at < '{end}'"
 
             prepared = conn.execute(
                 f"SELECT COUNT(*) AS n FROM orders "
-                f"WHERE {where_ready} AND status IN ('ready','assigned','en_route','delivered','closed')"
+                f"WHERE {where_ready} "
             ).fetchone()["n"]
 
             per_courier = conn.execute(
@@ -623,7 +670,7 @@ def create_app() -> FastAPI:
                 "LEFT JOIN orders o ON o.assigned_courier_id = u.id "
                 "   AND o.status IN ('delivered','closed') "
                 f"  AND {where_delivered} "
-                "WHERE u.role = 'courier' AND u.active = 1 "
+                "WHERE u.role = 'courier' "
                 "GROUP BY u.id, u.display_name "
                 "ORDER BY delivered_count DESC, u.display_name"
             ).fetchall()
@@ -637,8 +684,11 @@ def create_app() -> FastAPI:
                 f"  SUM(CASE WHEN source = 'voice' THEN 1 ELSE 0 END) AS voice_count "
                 f"FROM orders WHERE {where}"
             ).fetchone()
+            totals = dict(totals)
+            delivered = conn.execute(f"SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) gross FROM orders WHERE status IN ('delivered','closed') AND {where_delivered}").fetchone()
+            totals["gross_delivered"] = delivered["gross"]
             orders_count = totals["orders_count"] or 0
-            avg_ticket = (totals["gross_delivered"] // max(1, orders_count)) if orders_count else 0
+            avg_ticket = totals["gross_delivered"] // max(1, delivered["n"])
             cancel_rate = (
                 round(100.0 * (totals["cancel_count"] or 0) / orders_count, 1)
                 if orders_count else 0.0
@@ -692,7 +742,9 @@ def create_app() -> FastAPI:
         if not row or row["assigned_courier_id"] != user.id:
             raise HTTPException(403, "not your order")
 
-    def _submit_call_payload(payload: dict, actor_user_id: int) -> dict:
+    def _submit_call_payload(payload: dict, actor_user_id: int, request_key=None) -> dict:
+        if not isinstance(payload.get("address"), dict) or not isinstance(payload.get("items"), list):
+            raise HTTPException(400, "invalid address or items")
         phone = _normalize_phone(str(payload.get("phone", "")).strip())
         name = str(payload.get("name", "")).strip()
         address = payload.get("address") or {}
@@ -710,11 +762,26 @@ def create_app() -> FastAPI:
         if not items:
             raise HTTPException(400, "cannot submit an empty order")
 
+        if not re.fullmatch(r"\+[1-9]\d{6,14}", phone):
+            raise HTTPException(400, "invalid phone")
+        for item in items:
+            if not isinstance(item, dict) or type(item.get("menu_item_id")) is not int or type(item.get("qty")) is not int or not 1 <= item["qty"] <= 100:
+                raise HTTPException(400, "invalid item or quantity (1–100)")
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        if request_key and not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", request_key):
+            raise HTTPException(400, "invalid idempotency key")
         call_meta = VOICE.start_call(phone)
 
         conn = db.connect()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
+            if request_key:
+                previous = conn.execute("SELECT * FROM submissions WHERE request_key=? AND actor=?", (request_key, actor_user_id)).fetchone()
+                if previous:
+                    if previous["digest"] != digest:
+                        raise HTTPException(409, "idempotency key reused with changed payload")
+                    conn.execute("COMMIT")
+                    return json.loads(previous["result"])
             row = conn.execute(
                 "SELECT * FROM customers WHERE phone = ?", (phone,)
             ).fetchone()
@@ -748,15 +815,15 @@ def create_app() -> FastAPI:
             for it in items:
                 mid = int(it.get("menu_item_id"))
                 qty = int(it.get("qty", 1))
-                if qty < 1:
-                    continue
+                if not 1 <= qty <= 100:
+                    raise HTTPException(400, "invalid quantity")
                 m = conn.execute(
                     "SELECT id, name, price_cents FROM menu_items "
                     "WHERE id = ? AND available = 1",
                     (mid,),
                 ).fetchone()
                 if not m:
-                    continue
+                    raise HTTPException(400, "unknown or unavailable item")
                 conn.execute(
                     "INSERT INTO order_items "
                     "(order_id, menu_item_id, name_snapshot, qty, unit_price_cents) "
@@ -767,12 +834,14 @@ def create_app() -> FastAPI:
             conn.execute(
                 "UPDATE orders SET total_cents = ? WHERE id = ?", (total, order_id)
             )
+            conn.execute("INSERT INTO order_contacts (order_id, phone, name, street, house_number, plz, city, notes) VALUES (?,?,?,?,?,?,?,?)", (order_id, phone, name, street, house_number, plz, city, delivery_notes))
+            if request_key:
+                result = dict(order_id=order_id, call_id=call_meta.call_id, crm_match_status=crm_match, total_cents=total)
+                conn.execute("INSERT INTO submissions VALUES (?,?,?,?)", (request_key, actor_user_id, digest, json.dumps(result)))
             orders.log_event(conn, order_id, "voice.order.submitted",
                              actor_user_id,
                              f"call_id={call_meta.call_id} crm={crm_match}")
             conn.execute("COMMIT")
-        except HTTPException:
-            raise
         except Exception:
             conn.execute("ROLLBACK")
             raise

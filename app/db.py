@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Iterator
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS submissions (
+ request_key TEXT NOT NULL, actor INTEGER NOT NULL, digest TEXT NOT NULL, result TEXT NOT NULL,
+ PRIMARY KEY(request_key, actor)
+);
+CREATE TABLE IF NOT EXISTS order_contacts (
+ order_id INTEGER PRIMARY KEY REFERENCES orders(id), phone TEXT, name TEXT, street TEXT,
+ house_number TEXT, plz TEXT, city TEXT, notes TEXT
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE,
@@ -134,6 +143,7 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        conn.execute("INSERT OR IGNORE INTO order_contacts SELECT o.id,c.phone,c.name,c.street,c.house_number,c.plz,c.city,c.notes FROM orders o JOIN customers c ON c.id=o.customer_id")
     finally:
         conn.close()
 
