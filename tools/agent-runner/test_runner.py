@@ -49,6 +49,21 @@ class RunnerTests(unittest.TestCase):
         fake=Fake(response('malformed'));e,m=self.setup_engine(fake,max_retries=0);e.drive(m);self.assertEqual(self.state(m),'FAILED')
     def test_max_attempts(self):
         fake=Fake(response());e,m=self.setup_engine(fake,max_invocations=1);e.drive(m);self.assertEqual(self.state(m),'FAILED');self.assertEqual(len(fake.calls),1)
+    def test_validated_edits_committed(self):
+        class Edit(Fake):
+            def execute(self,provider,*args):
+                if not self.calls:
+                    path=Path(args[0])/'app';path.mkdir();(path/'safe.py').write_text('value = 1\n')
+                return super().execute(provider,*args)
+        fake=Edit(response(),response());e,m=self.setup_engine(fake,allow_edits=True);e.drive(m)
+        self.assertEqual(self.state(m),'COMPLETED')
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM commits').fetchone()[0],2)
+    def test_execution_crash_holds(self):
+        class Crash(Fake):
+            def execute(self,*args): raise RuntimeError('synthetic process crash')
+        e,m=self.setup_engine(Crash());e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+    def test_duration_limit(self):
+        fake=Fake();e,m=self.setup_engine(fake,max_seconds=0);e.drive(m);self.assertEqual(self.state(m),'FAILED');self.assertFalse(fake.calls)
     def test_authentication_boundary(self):
         value=response(exit_code=1);value['error']='Not logged in'
         e,m=self.setup_engine(Fake(value));e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')

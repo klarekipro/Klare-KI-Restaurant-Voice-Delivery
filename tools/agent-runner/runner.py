@@ -43,8 +43,9 @@ class Hold(Exception): pass
 
 class Store:
     def __init__(self,path):
-        self.path=Path(path).resolve();self.path.parent.mkdir(parents=True,exist_ok=True)
+        self.path=Path(path).resolve();self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         self.c=sqlite3.connect(self.path,timeout=10,isolation_level=None);self.c.row_factory=sqlite3.Row
+        os.chmod(self.path,0o600)
         self.c.execute('PRAGMA journal_mode=WAL');self.c.executescript(DDL)
     def event(self,m,event,detail=''):
         self.c.execute('INSERT INTO events(mission,at,event,detail) VALUES(?,?,?,?)',(m,time.time(),event,str(detail)))
@@ -184,7 +185,7 @@ class Engine:
         return self.c.execute('INSERT INTO tasks(mission,provider,state,kind,prompt,retries) VALUES(?,?,\'QUEUED\',?,?,?)',(m,p,kind,prompt,retries)).lastrowid
     def start(self,definition,repo):
         d=json.loads(Path(definition).read_text())
-        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd'}
+        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits'}
         if set(d)-allowed: raise Hold('unknown mission options')
         if not all(x in CHECKS for x in d.get('checks',[])): raise Hold('validation command outside allowlist')
         if d.get('max_concurrent',1)!=1: raise Hold('single-writer implementation supports max_concurrent=1 only')
@@ -214,13 +215,17 @@ class Engine:
             if self.validator: r=self.validator(name,work)
             else:
                 # No arbitrary shell commands. Reviewed repository code still executes in OS sandbox, offline.
-                python=Path(d.get('python',sys.executable)).resolve()
+                python=Path(d.get('python',sys.executable)).absolute()
                 if not python.is_file(): raise Hold('validation Python unavailable')
                 with tempfile.TemporaryDirectory(prefix='runner-check-') as tmp:
                     args=[x.replace('{python}',str(python)) for x in CHECKS[name]]
                     remaining=d.get('max_seconds',600)-(time.time()-self.c.execute('SELECT started FROM missions WHERE id=?',(m,)).fetchone()[0])
                     if remaining<=0: raise Hold('mission duration exhausted')
-                    r=run(['sandbox-exec','-p',profile(work,tmp,False),*args],work,timeout=min(120,remaining))
+                    runtime=python.parent.parent
+                    sandbox=profile(work,tmp,False)+'(allow file-read* (subpath '+json.dumps(str(runtime))+'))'
+                    env={k:os.environ[k] for k in ('PATH','LANG') if k in os.environ}
+                    env.update(HOME=tmp,TMPDIR=tmp,PYTHONNOUSERSITE='1')
+                    r=run(['sandbox-exec','-p',sandbox,*args],work,env=env,timeout=min(120,remaining))
             self.c.execute('INSERT INTO tests(mission,attempt,name,passed,exit_code,output) VALUES(?,?,?,?,?,?)',(m,a,name,int(r.returncode==0),r.returncode,(r.stdout+r.stderr)[-12000:]));ok &= r.returncode==0
         return ok and bool(d.get('checks'))
     def step(self,m):
@@ -281,16 +286,34 @@ class Engine:
             self.c.execute("UPDATE attempts SET state='FAILED' WHERE id=?",(a,));self.s.hold(m,'provider requested approval or unconfirmed limit: '+result['summary']);return False
         self.s.state(m,'VALIDATING')
         changes=git(work,'status','--porcelain')
+        self.s.event(m,'git_changes',changes or 'clean')
         if changes:
             # Reject sensitive/unreviewed paths; no blind git add of DBs or generated credentials.
             changed=git(work,'diff','--name-only').splitlines()+git(work,'ls-files','--others','--exclude-standard').splitlines()
             permitted=all(Path(x).parts[0] in ('app','tests','docs','outputs') and not any(y in x for y in ('.sqlite','.env','secret','requirements')) for x in changed)
             if not permitted or t['kind']=='review': self.s.hold(m,'out-of-scope or reviewer changes preserved');return False
-            self.s.hold(m,'agent edits require diff/security approval before commit or execution');return False
+            if not d.get('allow_edits',False):
+                self.s.hold(m,'agent edits require explicit mission allow_edits authorization');return False
+            if git(work,'diff','--name-only','--','tests'):
+                self.s.hold(m,'existing independent regression tests must not be modified');return False
+            for name in changed:
+                path=work/name
+                if path.is_symlink() or not path.resolve().is_relative_to(work.resolve()):
+                    self.s.hold(m,'symlink or escaped change path');return False
+                if path.exists():
+                    text=path.read_text(errors='replace')
+                    import re
+                    if re.search(r'-----BEGIN .*PRIVATE KEY|(?:ghp_|sk-live-|sk-proj-)[A-Za-z0-9_-]{16,}',text):
+                        self.s.hold(m,'possible credential in generated changes');return False
         passed=False
         if result and r['exit_code']==0 and result['status']=='done':
             try: passed=self.validate(m,a,work,d)
             except Exception as exc: self.s.event(m,'validation_error',str(exc))
+        if changes:
+            if not passed:
+                self.s.hold(m,'failed validation with dirty worktree: preserve for bounded human inspection');return False
+            git(work,'add','--',*changed)
+            git(work,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Local Agent Runner','-c','user.email=runner@example.invalid','commit','-m',f'Validated bounded agent task {t["id"]}')
         self.c.execute('UPDATE attempts SET state=? WHERE id=?',('COMPLETED' if passed else 'FAILED',a));self.c.execute('UPDATE tasks SET state=? WHERE id=?',('COMPLETED' if passed else 'FAILED',t['id']))
         sha=git(work,'rev-parse','HEAD');self.c.execute('INSERT INTO commits(mission,sha,attempt) VALUES(?,?,?)',(m,sha,a))
         if not passed:

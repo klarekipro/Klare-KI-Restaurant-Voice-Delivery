@@ -1,0 +1,15 @@
+{
+  "name": "PR3 simulator new-order demonstration repair",
+  "source": "7b13ba55f66c7214143dc00aadbca8435a0a1d05",
+  "prompt": "Fix the verified simulator demonstration blocker in app/templates/call_simulator.html: submissionKey currently stays fixed for the page lifetime. Keep the same key for uncertain retries of one submission, disable duplicate clicks while in flight, and provide an explicit German-labelled new-order action after success that resets the form/quantities and creates a fresh key. Handle fetch/network errors with textContent and a recoverable button state. Do not alter tests, dependencies, or other files. Read the existing template, make only this bounded safe change, return done once implemented. Browser/mobile acceptance is unverified unless actually exercised; no browser tool is provided. Do not claim product readiness. A second provider will review your change and external original tests will run.",
+  "provider": "claude",
+  "fallback": true,
+  "allow_edits": true,
+  "checks": ["pytest", "acceptance"],
+  "python": "/Users/admin/Projects/restaurant-codex-hardening/.venv/bin/python",
+  "max_invocations": 3,
+  "max_retries": 0,
+  "max_failures": 2,
+  "max_seconds": 360,
+  "max_concurrent": 1
+}
