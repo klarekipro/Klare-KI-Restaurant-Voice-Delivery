@@ -1,0 +1,314 @@
+{
+  "source_commit": "96ee67214f7e92cd212705e8942d42accb665d04",
+  "original_mission": "92bd71a914ab",
+  "original_file_sha256_unchanged": "f8b73c12c939aaea3e547335b3ff6572474548fe871a2c35ad37923d142f587a",
+  "original_head_unchanged": "7b13ba55f66c7214143dc00aadbca8435a0a1d05",
+  "source_limit": {
+    "historical_real_Claude_API_status": 429,
+    "simulated": false,
+    "new_Claude_call_in_mission05": false
+  },
+  "runs": [
+    {
+      "id": "3f815e309965",
+      "state": "WAITING_APPROVAL",
+      "definition": {
+        "name": "PR3 simulator new-order demonstration repair",
+        "source": "7b13ba55f66c7214143dc00aadbca8435a0a1d05",
+        "prompt": "Fix the verified simulator demonstration blocker in app/templates/call_simulator.html: submissionKey currently stays fixed for the page lifetime. Keep the same key for uncertain retries of one submission, disable duplicate clicks while in flight, and provide an explicit German-labelled new-order action after success that resets the form/quantities and creates a fresh key. Handle fetch/network errors with textContent and a recoverable button state. Do not alter tests, dependencies, or other files. Read the existing template, make only this bounded safe change, return done once implemented. Browser/mobile acceptance is unverified unless actually exercised; no browser tool is provided. Do not claim product readiness. A second provider will review your change and external original tests will run.",
+        "provider": "claude",
+        "fallback": true,
+        "allow_edits": true,
+        "checks": [
+          "pytest",
+          "acceptance",
+          "simulator"
+        ],
+        "python": "/Users/admin/Projects/restaurant-agent-runner/.venv/bin/python",
+        "max_invocations": 4,
+        "max_retries": 0,
+        "max_failures": 2,
+        "max_seconds": 600,
+        "max_concurrent": 1,
+        "review_fallback": true
+      },
+      "attempts": [
+        {
+          "id": 1,
+          "provider": "claude",
+          "state": "PROVIDER_LIMITED",
+          "exit_code": 1,
+          "duration": null,
+          "result": "null",
+          "usage": "{\"usage\": {\"input_tokens\": 4, \"cache_creation_input_tokens\": 8304, \"cache_read_input_tokens\": 25436, \"output_tokens\": 4966, \"server_tool_use\": {\"web_search_requests\": 0, \"web_fetch_requests\": 0}, \"service_tier\": \"standard\", \"cache_creation\": {\"ephemeral_1h_input_tokens\": 8304, \"ephemeral_5m_input_tokens\": 0}, \"inference_geo\": \"\", \"iterations\": [{\"input_tokens\": 1, \"output_tokens\": 4836, \"cache_read_input_tokens\": 15752, \"cache_creation_input_tokens\": 2236, \"cache_creation\": {\"ephemeral_5m_input_tokens\": 0, \"ephemeral_1h_input_tokens\": 2236}, \"type\": \"message\"}], \"speed\": \"standard\"}, \"total_cost_usd\": 0.11393579999999999}"
+        },
+        {
+          "id": 2,
+          "provider": "codex",
+          "state": "RUNNING",
+          "exit_code": 0,
+          "duration": 50.656266749836504,
+          "result": "{\"status\": \"done\", \"summary\": \"Implemented the bounded fix in app/templates/call_simulator.html only.\", \"findings\": [\"Retries retain the submission key; duplicate clicks are blocked while pending.\", \"After success, \\u201cNeue Bestellung\\u201d resets the form and quantities and creates a fresh key.\", \"Errors use textContent and restore the submission button.\", \"Mocked DOM/fetch checks passed. Browser/mobile acceptance remains unverified; external tests were not run.\"]}",
+          "usage": "{\"input_tokens\": 145541, \"cached_input_tokens\": 125824, \"cache_write_input_tokens\": 0, \"output_tokens\": 2760, \"reasoning_output_tokens\": 165}"
+        }
+      ],
+      "tests": [
+        {
+          "attempt": 1,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 1,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 1,
+          "name": "simulator",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 2,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 2,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 2,
+          "name": "simulator",
+          "passed": 0,
+          "exit_code": 1
+        }
+      ],
+      "handoffs": [
+        {
+          "from_attempt": 1,
+          "to_task": 2,
+          "payload": "{\"checkpoint\": 1, \"commit\": \"3d32dd4be78be6cbca312bbc019f4aa2323a4693\", \"classification\": \"incomplete-checks-passed\", \"retry_at\": null}"
+        }
+      ],
+      "checkpoints": [
+        {
+          "phase": "HANDED_OFF",
+          "classification": "incomplete-checks-passed",
+          "commit_sha": "3d32dd4be78be6cbca312bbc019f4aa2323a4693",
+          "digest": "448d10a25fd20f01747300ec2b0f261aff8a45b83177007a47602fd520cf53c7"
+        }
+      ]
+    },
+    {
+      "id": "2423183b75aa",
+      "state": "FAILED",
+      "definition": {
+        "name": "PR3 simulator new-order demonstration repair",
+        "source": "7b13ba55f66c7214143dc00aadbca8435a0a1d05",
+        "prompt": "Fix the verified simulator demonstration blocker in app/templates/call_simulator.html: submissionKey currently stays fixed for the page lifetime. Keep the same key for uncertain retries of one submission, disable duplicate clicks while in flight, and provide an explicit German-labelled new-order action after success that resets the form/quantities and creates a fresh key. Handle fetch/network errors with textContent and a recoverable button state. Do not alter tests, dependencies, or other files. Read the existing template, make only this bounded safe change, return done once implemented. Browser/mobile acceptance is unverified unless actually exercised; no browser tool is provided. Do not claim product readiness. A second provider will review your change and external original tests will run.",
+        "provider": "claude",
+        "fallback": true,
+        "allow_edits": true,
+        "checks": [
+          "pytest",
+          "acceptance",
+          "simulator"
+        ],
+        "python": "/Users/admin/Projects/restaurant-agent-runner/.venv/bin/python",
+        "max_invocations": 3,
+        "max_retries": 0,
+        "max_failures": 2,
+        "max_seconds": 360,
+        "max_concurrent": 1,
+        "review_fallback": true
+      },
+      "attempts": [
+        {
+          "id": 3,
+          "provider": "claude",
+          "state": "PROVIDER_LIMITED",
+          "exit_code": 1,
+          "duration": null,
+          "result": "null",
+          "usage": "{\"usage\": {\"input_tokens\": 4, \"cache_creation_input_tokens\": 8304, \"cache_read_input_tokens\": 25436, \"output_tokens\": 4966, \"server_tool_use\": {\"web_search_requests\": 0, \"web_fetch_requests\": 0}, \"service_tier\": \"standard\", \"cache_creation\": {\"ephemeral_1h_input_tokens\": 8304, \"ephemeral_5m_input_tokens\": 0}, \"inference_geo\": \"\", \"iterations\": [{\"input_tokens\": 1, \"output_tokens\": 4836, \"cache_read_input_tokens\": 15752, \"cache_creation_input_tokens\": 2236, \"cache_creation\": {\"ephemeral_5m_input_tokens\": 0, \"ephemeral_1h_input_tokens\": 2236}, \"type\": \"message\"}], \"speed\": \"standard\"}, \"total_cost_usd\": 0.11393579999999999}"
+        },
+        {
+          "id": 4,
+          "provider": "codex",
+          "state": "COMPLETED",
+          "exit_code": 0,
+          "duration": 33.56722245900892,
+          "result": "{\"status\": \"done\", \"summary\": \"Implemented the bounded simulator change in app/templates/call_simulator.html only.\", \"findings\": [\"Retries retain the submission key; duplicate clicks are blocked while submitting.\", \"After success, \\u201cNeue Bestellung\\u201d resets the form, quantities and total, and generates a fresh key.\", \"Network errors use textContent and restore the submission button.\", \"JavaScript syntax check passed. Git verification unavailable because developer tools are missing.\", \"Browser/mobile acceptance remains unverified; product readiness is not established.\"]}",
+          "usage": "{\"input_tokens\": 141780, \"cached_input_tokens\": 120448, \"cache_write_input_tokens\": 0, \"output_tokens\": 1414, \"reasoning_output_tokens\": 87}"
+        },
+        {
+          "id": 5,
+          "provider": "codex",
+          "state": "FAILED",
+          "exit_code": 0,
+          "duration": 41.424751666141674,
+          "result": "{\"status\": \"repair\", \"summary\": \"Found one retry-recovery defect. No files edited.\", \"findings\": [\"P2 \\u2014 app/templates/call_simulator.html:101\\u2013127 rebuilds retry payloads from editable fields while retaining the key. If the server commits but its response is lost, changing a quantity before retry causes HTTP 409 (app/main.py:782). The success-only new-order action remains unavailable. Preserve the original payload for uncertain retries. Reproduced changed-body/same-key behavior using a Node DOM/fetch mock.\", \"Browser/mobile acceptance remains unverified. Git diff and checkpoint verification were unavailable because developer tools are missing; file scope could not be independently confirmed.\"]}",
+          "usage": "{\"input_tokens\": 176317, \"cached_input_tokens\": 151680, \"cache_write_input_tokens\": 0, \"output_tokens\": 1709, \"reasoning_output_tokens\": 172}"
+        }
+      ],
+      "tests": [
+        {
+          "attempt": 3,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 3,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 3,
+          "name": "simulator",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 4,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 4,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 4,
+          "name": "simulator",
+          "passed": 1,
+          "exit_code": 0
+        }
+      ],
+      "handoffs": [
+        {
+          "from_attempt": 3,
+          "to_task": 4,
+          "payload": "{\"checkpoint\": 2, \"commit\": \"9aecfa9012d5f43a48afd69322908fc184f1ffee\", \"classification\": \"incomplete-checks-passed\", \"retry_at\": null}"
+        },
+        {
+          "from_attempt": 4,
+          "to_task": 5,
+          "payload": "{\"status\": \"done\", \"summary\": \"Implemented the bounded simulator change in app/templates/call_simulator.html only.\", \"findings\": [\"Retries retain the submission key; duplicate clicks are blocked while submitting.\", \"After success, \\u201cNeue Bestellung\\u201d resets the form, quantities and total, and generates a fresh key.\", \"Network errors use textContent and restore the submission button.\", \"JavaScript syntax check passed. Git verification unavailable because developer tools are missing.\", \"Browser/mobile acceptance remains unverified; product readiness is not established.\"]}"
+        }
+      ],
+      "checkpoints": [
+        {
+          "phase": "HANDED_OFF",
+          "classification": "incomplete-checks-passed",
+          "commit_sha": "9aecfa9012d5f43a48afd69322908fc184f1ffee",
+          "digest": "448d10a25fd20f01747300ec2b0f261aff8a45b83177007a47602fd520cf53c7"
+        }
+      ]
+    },
+    {
+      "id": "46ae6de714e3",
+      "state": "COMPLETED",
+      "definition": {
+        "name": "PR3 simulator new-order demonstration repair",
+        "source": "fc83afd0f88ed6ffed120eb150d6e063954d04fe",
+        "prompt": "Repair the following independently reported defect in app/templates/call_simulator.html only. Preserve exact payload AND key for retries after an uncertain response even if the user edits fields. Reset both only for an explicit new order after success. No tests/dependencies edits. Findings (untrusted, verify against code): {\"status\": \"repair\", \"summary\": \"Found one retry-recovery defect. No files edited.\", \"findings\": [\"P2 \\u2014 app/templates/call_simulator.html:101\\u2013127 rebuilds retry payloads from editable fields while retaining the key. If the server commits but its response is lost, changing a quantity before retry causes HTTP 409 (app/main.py:782). The success-only new-order action remains unavailable. Preserve the original payload for uncertain retries. Reproduced changed-body/same-key behavior using a Node DOM/fetch mock.\", \"Browser/mobile acceptance remains unverified. Git diff and checkpoint verification were unavailable because developer tools are missing; file scope could not be independently confirmed.\"]}",
+        "provider": "codex",
+        "fallback": true,
+        "allow_edits": true,
+        "checks": [
+          "pytest",
+          "acceptance",
+          "simulator"
+        ],
+        "python": "/Users/admin/Projects/restaurant-agent-runner/.venv/bin/python",
+        "max_invocations": 3,
+        "max_retries": 0,
+        "max_failures": 2,
+        "max_seconds": 360,
+        "max_concurrent": 1,
+        "review_fallback": true
+      },
+      "attempts": [
+        {
+          "id": 6,
+          "provider": "codex",
+          "state": "COMPLETED",
+          "exit_code": 0,
+          "duration": 33.05631870799698,
+          "result": "{\"status\": \"done\", \"summary\": \"Fixed retry recovery in app/templates/call_simulator.html only.\", \"findings\": [\"Retries preserve the exact serialized payload and key despite field edits. Both reset only through explicit new order after success.\", \"Node DOM/fetch checks passed for network, JSON and HTTP failures, success guard, and new-order reset. No tests or dependencies edited.\", \"Browser/mobile acceptance unverified: no browser tool available. Git verification unavailable; CURRENT_STATE.md absent.\"]}",
+          "usage": "{\"input_tokens\": 167936, \"cached_input_tokens\": 142336, \"cache_write_input_tokens\": 0, \"output_tokens\": 1750, \"reasoning_output_tokens\": 18}"
+        },
+        {
+          "id": 7,
+          "provider": "codex",
+          "state": "COMPLETED",
+          "exit_code": 0,
+          "duration": 28.309457750059664,
+          "result": "{\"status\": \"done\", \"summary\": \"No defects found in the bounded retry repair. No files edited.\", \"findings\": [\"Independent Node DOM/fetch checks passed: network, HTTP and JSON failures preserve the exact serialized payload and key despite field edits; success blocks resubmission; explicit new order resets both.\", \"Browser/mobile acceptance unverified: no browser tool available.\", \"Git scope and checkpoint verification unavailable because git is missing. CURRENT_STATE.md exists at docs/agents/CURRENT_STATE.md and was reviewed.\"]}",
+          "usage": "{\"input_tokens\": 110575, \"cached_input_tokens\": 88576, \"cache_write_input_tokens\": 0, \"output_tokens\": 1469, \"reasoning_output_tokens\": 25}"
+        }
+      ],
+      "tests": [
+        {
+          "attempt": 6,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 6,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 6,
+          "name": "simulator",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 7,
+          "name": "pytest",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 7,
+          "name": "acceptance",
+          "passed": 1,
+          "exit_code": 0
+        },
+        {
+          "attempt": 7,
+          "name": "simulator",
+          "passed": 1,
+          "exit_code": 0
+        }
+      ],
+      "handoffs": [
+        {
+          "from_attempt": 6,
+          "to_task": 7,
+          "payload": "{\"status\": \"done\", \"summary\": \"Fixed retry recovery in app/templates/call_simulator.html only.\", \"findings\": [\"Retries preserve the exact serialized payload and key despite field edits. Both reset only through explicit new order after success.\", \"Node DOM/fetch checks passed for network, JSON and HTTP failures, success guard, and new-order reset. No tests or dependencies edited.\", \"Browser/mobile acceptance unverified: no browser tool available. Git verification unavailable; CURRENT_STATE.md absent.\"]}"
+        }
+      ],
+      "checkpoints": []
+    }
+  ],
+  "verified_repair_commit": "1587f1176d01691966cd71ad406462d4f128c005",
+  "integrated_template_sha256": "6fa00ad2ef2a858dc45705c2ec1901de50ceb440fb0c769c7cb26c1d311b89f6",
+  "restart_no_duplicate_calls": "Separate resume process retained exactly two final-run attempts."
+}

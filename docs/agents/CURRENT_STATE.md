@@ -1,16 +1,11 @@
-# Current state — Mission 04
+# Current state — Mission 05
 
-Active implementation: feat/local-agent-runner, separate worktree /Users/admin/Projects/restaurant-agent-runner. Source PR3: 7b13ba55f66c7214143dc00aadbca8435a0a1d05. Resolve final handoff commit with git rev-parse HEAD and compare origin before writing. Existing MVP and hardening worktrees were not modified.
+Branch: feat/autonomous-takeover-hardening. Worktree: /Users/admin/Projects/restaurant-takeover-hardening. Base: PR4 commit 96ee67214f7e92cd212705e8942d42accb665d04. Resolve final handoff SHA with git rev-parse HEAD and compare remote before work. No automatic merge or deployment approval.
 
-Runner entry: python3 tools/agent-runner/runner.py. Read tools/agent-runner/README.md and outputs/codex/mission-04/VALIDATION.md. Current mission state lives in ignored .agent-runner/state.sqlite. Model/provider changes must continue from records, not assumptions.
+Read tools/agent-runner/README.md and outputs/codex/mission-05/VALIDATION.md. SQLite state and private snapshots remain ignored in .agent-runner/. Original mission 92bd71a914ab is still held and its template hash is unchanged. Do not clean its worktree or the intermediate recovery worktrees.
 
-Real review 3ca428d18423: COMPLETED, Claude→Codex with automatic handoff and external compile checks; two attempts unchanged after separate-process resume. Real repair 92bd71a914ab: WAITING_APPROVAL following API429 with partial uncommitted template change. Preserve .agent-runner/worktrees/92bd71a914ab; no destructive cleanup. Its hash is recorded in real-limit-hold.json. Claude availability is unavailable with unknown machine retry timestamp. Historical holds are not automatically approved.
+Real recovery 2423183b75aa was independently rejected for a retry payload defect. Authorized follow-up 46ae6de714e3 COMPLETED using two real Codex processes, external checks and no manual result forwarding. Claude API429 is historical real evidence; reverse direction is simulated test coverage. Final repaired template is integrated byte-for-byte from verified commit 1587f11; full hashes and machine results are in live-recovery.json.
 
-Validation commands:
-- python3 -m unittest discover -s tools/agent-runner -p 'test_*.py' -q — 23 passed.
-- Prepared project .venv from requirements-local.lock; original 22 app tests and scripts/local_acceptance.py passed in isolated loopback-only validation.
-- `.venv/bin/python -m pytest -q` — 22 application tests passed (default pytest discovery excludes tools); runner suite is run separately. `.venv/bin/python -m pip check` and `git diff --check` passed. One existing Starlette/httpx deprecation warning remains.
+Commands: python3 -m unittest discover -s tools/agent-runner -p 'test_*.py' -q; reviewed-project .venv/bin/python -m pytest -q; .venv/bin/python scripts/local_acceptance.py; node tools/agent-runner/check_simulator.cjs app/templates/call_simulator.html. Expected: 36 runner tests, 22 app tests, HTTP/JS checks pass. One existing Starlette/httpx deprecation warning remains. No browser/mobile verification.
 
-Intentionally ignored: state SQLite/WAL/lock, private mission worktrees, .venv and caches. No DB/auth material committed. Main feature worktree should be clean after publication; receiving agent must verify actual status and remote SHA. Do not merge automatically or expose demo passwords publicly.
-
-Next task: review runner security/state transitions and evidence independently. Inspect the preserved repair before operator approval or a new authorized continuation; use Codex if Claude capacity is still exhausted. Add safely scoped browser/mobile acceptance; neither HTTP nor compile checks constitute browser verification. Complete deferred application tasks listed in TASK_BOARD.
+Next agent: review PR security and recovery transaction boundaries independently. Reproduce tests and CLI evidence. Existing complete missions must not execute again on resume. Failed review missions and historical approval holds must remain terminal/held; use explicitly authorized idempotent import/follow-up commands for bounded work. Keep local-only credentials and synthetic data restrictions.

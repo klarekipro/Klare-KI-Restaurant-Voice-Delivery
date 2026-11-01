@@ -13,3 +13,6 @@ No permission to merge, deploy or connect real telephony. No human demo acceptan
 
 Mission 04 completed: persistent runner, two real adapters, native/outer isolation probes, actual automatic Claude→Codex review cycle, controlled validators, operator controls, recovery tests and redacted evidence.
 Remaining: actual browser/mobile acceptance; complete preserved simulator repair after provider capacity/inspection; live quota takeover after corrected parser; wider process-termination/race coverage. These remain distinct from the completed review cycle.
+
+Mission 05: preserved historical partial work; implemented validated checkpoint recovery, restart-safe atomic handoffs and typed delivery records. Real historical Claude429→live Codex continuation, independent review rejection and bounded follow-up completed. Integrated verified simulator retry payload/key repair.
+Remaining: real reverse-provider CLI demonstration when Claude capacity permits; browser/mobile acceptance; known form-rejection UX; further process/credential isolation review. Original held mission and failed intermediate recovery trees remain private and intact.
