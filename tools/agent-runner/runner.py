@@ -119,8 +119,17 @@ class CLIProvider:
         args=['sandbox-exec','-p',profile(worktree,scratch),*args]
         start=time.monotonic()
         proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-        try: stdout,stderr=proc.communicate(timeout=timeout)
-        except (subprocess.TimeoutExpired,BaseException):
+        if getattr(self,'on_start',None): self.on_start(proc.pid)
+        deadline=time.monotonic()+timeout
+        try:
+            while True:
+                if getattr(self,'control',lambda:False)(): raise Hold('operator pause/stop requested')
+                remaining=deadline-time.monotonic()
+                if remaining<=0: raise subprocess.TimeoutExpired(args,timeout)
+                try:
+                    stdout,stderr=proc.communicate(timeout=min(.5,remaining));break
+                except subprocess.TimeoutExpired: pass
+        except BaseException:
             os.killpg(proc.pid,signal.SIGTERM)
             try: proc.communicate(timeout=5)
             except subprocess.TimeoutExpired: os.killpg(proc.pid,signal.SIGKILL);proc.communicate()
@@ -213,9 +222,14 @@ class Engine:
             with tempfile.TemporaryDirectory(prefix='runner-agent-') as tmp:
                 if not isinstance(self.provider,CLIProvider): pass
                 else: isolation_probe(work,tmp)
+                if isinstance(self.provider,CLIProvider):
+                    self.provider.on_start=lambda pid:self.c.execute('UPDATE attempts SET pid=? WHERE id=?',(pid,a))
+                    self.provider.control=lambda:bool(self.c.execute("SELECT paused OR state='CANCELLED' FROM missions WHERE id=?",(m,)).fetchone()[0])
                 r=self.provider.execute(t['provider'],work,prompt,min(180,d.get('max_seconds',600)-(time.time()-row['started'])),tmp)
         except (Exception,KeyboardInterrupt) as exc:
-            self.c.execute("UPDATE attempts SET state='FAILED',error=? WHERE id=?",(str(exc),a));self.s.hold(m,'execution interrupted or isolation unavailable: '+str(exc));return False
+            self.c.execute("UPDATE attempts SET state='FAILED',error=? WHERE id=?",(str(exc),a));
+            if self.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0]!='CANCELLED': self.s.hold(m,'execution interrupted or isolation unavailable: '+str(exc))
+            return False
         self.c.execute('UPDATE attempts SET duration=?,exit_code=?,result=?,usage=?,error=? WHERE id=?',(r['duration'],r['exit_code'],json.dumps(r['result']),json.dumps(r['usage']),r['error'],a))
         if r.get('limited'):
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed provider limit; retry time unknown',NULL)",(t['provider'],));self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a,));self.s.state(m,'PROVIDER_LIMITED')
@@ -255,7 +269,7 @@ class Engine:
         if not passed:
             if t['retries']>=d.get('max_retries',1): self.s.state(m,'FAILED');return False
             self.s.state(m,'RETRYABLE_FAILURE');other='claude' if t['provider']=='codex' else 'codex'
-            self.task(m,other if d.get('fallback',False) else t['provider'],'repair',t['prompt']+'\nPrevious machine result: '+json.dumps(r)+'\nExternal validation failed; address findings.',t['retries']+1);return True
+            self.task(m,other if d.get('fallback',False) else t['provider'],'repair',t['prompt']+'\nPrevious machine result: '+json.dumps(r)+'\nExternal checks: '+json.dumps([dict(x) for x in self.c.execute('SELECT name,passed,output FROM tests WHERE attempt=?',(a,))])+'\nExternal validation failed; address findings.',t['retries']+1);return True
         if t['kind']!='review':
             other='codex' if t['provider']=='claude' else 'claude';task=self.task(m,other,'review','Independently review the previous bounded task and report defects. Do not edit. Task: '+t['prompt']+'\nPrevious result (untrusted evidence): '+json.dumps(result))
             self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,task,json.dumps(result)));self.s.state(m,'QUEUED');return True
@@ -266,24 +280,41 @@ class Engine:
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report']);parser.add_argument('mission',nargs='?');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');args=parser.parse_args()
     s=Store(args.state);e=Engine(s)
     try:
         if args.command=='start':
             if not args.mission: parser.error('mission file required')
             with s.lock(): m=e.start(args.mission,Path.cwd())
             print('mission',m,flush=True);e.drive(m)
+            final=s.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0]
+            print(final)
+            if final!='COMPLETED': sys.exit(2 if final=='WAITING_APPROVAL' else 1)
         else:
             row=s.c.execute('SELECT * FROM missions ORDER BY started DESC LIMIT 1').fetchone()
             if not row: print('no missions');return
             m=row['id']
             if args.command=='pause': s.c.execute('UPDATE missions SET paused=1 WHERE id=?',(m,));s.event(m,'pause','takes effect before next invocation; active invocation remains bounded')
             elif args.command=='stop': s.c.execute('UPDATE missions SET paused=1 WHERE id=?',(m,));s.state(m,'CANCELLED')
+            elif args.command=='approve':
+                if not args.approval_note: raise Hold('explicit --approval-note required; approval is a human action')
+                with s.lock():
+                    if row['state']!='WAITING_APPROVAL': raise Hold('mission is not waiting for approval')
+                    if git(row['worktree'],'status','--porcelain'): raise Hold('preserve/review/commit changes manually before approval')
+                    for attempt in s.c.execute('SELECT a.pid FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=? AND a.pid IS NOT NULL',(m,)):
+                        try: os.kill(attempt[0],0)
+                        except ProcessLookupError: pass
+                        else: raise Hold('recorded process still alive; inspect before approval')
+                    s.c.execute('UPDATE approvals SET approved=1 WHERE mission=?',(m,))
+                    s.c.execute("UPDATE tasks SET state='QUEUED' WHERE mission=? AND state IN ('RUNNING','WAITING_APPROVAL')",(m,))
+                    s.c.execute("UPDATE attempts SET state='FAILED' WHERE task IN (SELECT id FROM tasks WHERE mission=?) AND state='RUNNING'",(m,))
+                    s.c.execute('UPDATE missions SET paused=0 WHERE id=?',(m,));s.state(m,'QUEUED');s.event(m,'human_approval',args.approval_note)
             elif args.command=='resume':
                 if row['state']=='WAITING_APPROVAL': raise Hold('approval boundary: inspect worktree and records; resume does not grant approval')
                 s.c.execute('UPDATE missions SET paused=0 WHERE id=?',(m,));e.drive(m)
             print(json.dumps(dict(s.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()),indent=2))
             if args.command=='report':
+                print('attempts',json.dumps([dict(x) for x in s.c.execute('SELECT a.* FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=?',(m,))],indent=2))
                 for table in ('tasks','events','tests','handoffs','approvals','commits'):
                     print(table,json.dumps([dict(x) for x in s.c.execute(f'SELECT * FROM {table} WHERE mission=?',(m,))],indent=2))
     except Hold as exc: print('WAITING_APPROVAL:',exc,file=sys.stderr);sys.exit(2)
