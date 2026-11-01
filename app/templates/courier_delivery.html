@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Lieferung #{{ bundle.order.id }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Lieferung #{{ bundle.order.id }}</h1>
+  <p><span class="chip">{{ bundle.order.status }}</span></p>
+
+  {% if bundle.customer %}
+  <h2>Empfänger</h2>
+  <p><strong>{{ bundle.customer.name.split(' ')[0] }}</strong></p>
+  <p class="address">
+    {{ bundle.customer.street }} {{ bundle.customer.house_number }}<br>
+    {{ bundle.customer.plz }} {{ bundle.customer.city }}
+  </p>
+  {% if bundle.customer.notes %}
+  <p class="muted">Notiz: {{ bundle.customer.notes }}</p>
+  {% endif %}
+  {% endif %}
+
+  <div class="actions big">
+    {% if nav_url %}<a class="primary big" target="_blank" rel="noopener" href="{{ nav_url }}">Navigator öffnen</a>{% endif %}
+    <button id="call-btn" class="secondary big" data-order-id="{{ bundle.order.id }}">Anrufen</button>
+  </div>
+  <div id="phone-reveal" class="phone-reveal"></div>
+
+  <details>
+    <summary>Positionen anzeigen</summary>
+    <ul class="items">
+      {% for it in bundle['items'] %}
+      <li>{{ it.qty }}× {{ it.name_snapshot }}</li>
+      {% endfor %}
+    </ul>
+    <p>Gesamt: <strong>{{ bundle.order.total_cents | cents }}</strong></p>
+  </details>
+
+  <div class="actions big">
+    {% if bundle.order.status == 'assigned' %}
+    <form method="post" action="/courier/{{ bundle.order.id }}/start"><button class="secondary big">Unterwegs</button></form>
+    {% endif %}
+    {% if bundle.order.status in ('assigned','en_route') %}
+    <form method="post" action="/courier/{{ bundle.order.id }}/delivered"><button class="primary big">Zugestellt</button></form>
+    <form method="post" action="/courier/{{ bundle.order.id }}/failed" class="inline">
+      <input name="reason" placeholder="Grund" required>
+      <button class="danger">Problem melden</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<script>
+document.getElementById('call-btn').addEventListener('click', async () => {
+  const id = document.getElementById('call-btn').dataset.orderId;
+  const fd = new FormData();
+  fd.append('reason', 'call_customer');
+  const r = await fetch(`/courier/${id}/reveal_phone`, { method: 'POST', body: fd });
+  const el = document.getElementById('phone-reveal');
+  if (!r.ok) { el.textContent = 'Telefonnummer nicht verfügbar.'; return; }
+  const data = await r.json();
+  el.innerHTML = '<a href="tel:' + data.phone + '">' + data.phone + '</a> ' +
+    '<span class="muted">(Zugriff wurde protokolliert)</span>';
+});
+</script>
+{% endblock %}

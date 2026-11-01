@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Bestellung #{{ bundle.order.id }}{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="row space">
+    <h1>Bestellung #{{ bundle.order.id }}</h1>
+    <span class="chip">{{ bundle.order.status }}</span>
+  </div>
+  <p class="muted">Call-ID: <span class="mono">{{ bundle.order.call_id }}</span> ·
+     Quelle: {{ bundle.order.source }} ·
+     Sprache: {{ bundle.order.call_language }} ·
+     Aufzeichnung gespeichert: {% if bundle.order.recording_stored %}ja{% else %}nein{% endif %}</p>
+
+  <div class="grid-2">
+    <div>
+      <h2>Positionen</h2>
+      <table>
+        <thead><tr><th>Position</th><th>Menge</th><th>Einzelpreis</th><th>Summe</th>
+          {% if bundle.order.status == 'new' %}<th></th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for it in bundle['items'] %}
+          <tr>
+            <td>{{ it.name_snapshot }}</td>
+            <td class="num">{{ it.qty }}</td>
+            <td class="num">{{ it.unit_price_cents | cents }}</td>
+            <td class="num">{{ (it.unit_price_cents * it.qty) | cents }}</td>
+            {% if bundle.order.status == 'new' %}
+            <td>
+              <form method="post" action="/confirmer/{{ bundle.order.id }}/edit_item" class="inline">
+                <input type="hidden" name="item_id" value="{{ it.id }}">
+                <input type="number" min="0" name="qty" value="{{ it.qty }}" style="width:4rem">
+                <button class="link">speichern</button>
+              </form>
+              <form method="post" action="/confirmer/{{ bundle.order.id }}/edit_item" class="inline">
+                <input type="hidden" name="item_id" value="{{ it.id }}">
+                <input type="hidden" name="qty" value="0">
+                <button class="link danger">entfernen</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><td colspan="3"><strong>Gesamt</strong></td>
+              <td class="num"><strong>{{ bundle.order.total_cents | cents }}</strong></td>
+              {% if bundle.order.status == 'new' %}<td></td>{% endif %}</tr>
+        </tfoot>
+      </table>
+
+      {% if bundle.order.status == 'new' %}
+      <h3>Position hinzufügen</h3>
+      <form method="post" action="/confirmer/{{ bundle.order.id }}/add_item" class="row">
+        <label>Position
+          <select name="menu_item_id">
+            {% for m in menu %}
+            <option value="{{ m.id }}">{{ m.name }} — {{ m.price_cents | cents }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Menge <input type="number" name="qty" min="1" value="1"></label>
+        <button class="secondary">Hinzufügen</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div>
+      <h2>Kunde &amp; Adresse</h2>
+      {% if bundle.customer %}
+      <p><strong>{{ bundle.customer.name }}</strong>
+         {% if bundle.customer.trusted %}<span class="chip ok">Stammkunde</span>
+         {% else %}<span class="chip info">Erstanruf</span>{% endif %}
+      </p>
+      <p class="mono">{{ bundle.customer.phone }}</p>
+      <p>{{ bundle.customer.street }} {{ bundle.customer.house_number }}<br>
+         {{ bundle.customer.plz }} {{ bundle.customer.city }}</p>
+      <p class="muted">{{ bundle.customer.notes }}</p>
+      {% else %}
+      <p class="muted">Kein Kundendatensatz.</p>
+      {% endif %}
+
+      <h2>Verlauf</h2>
+      <ol class="log">
+        {% for e in bundle['events'] %}
+        <li><span class="mono">{{ e.occurred_at }}</span> — {{ e.event }}
+          {% if e.detail %}<em>({{ e.detail }})</em>{% endif %}</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+
+  {% if bundle.order.status == 'new' %}
+  <div class="actions">
+    <form method="post" action="/confirmer/{{ bundle.order.id }}/approve" class="inline">
+      <button class="primary">Bestätigen &amp; an Küche senden</button>
+    </form>
+    <form method="post" action="/confirmer/{{ bundle.order.id }}/reject" class="inline reject">
+      <input name="reason" placeholder="Grund (Pflicht)" required>
+      <button class="danger">Ablehnen</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

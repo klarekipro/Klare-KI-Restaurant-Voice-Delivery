@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Anruf-Simulator{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Anruf-Simulator</h1>
+  <p class="hint">Dieses Modul ersetzt KEINEN echten Telefon-Provider. Es erzeugt dieselbe
+    strukturierte Bestellung wie die Voice-Pipeline. Reale Telefonie wird über
+    <code>app/voice/interface.py</code> angeschlossen (siehe <code>docs/voice-integration.md</code>).</p>
+
+  <div class="disclosure">
+    <strong>KI-Hinweis (EU AI Act, Testwortlaut):</strong>
+    <em>{{ disclosure }}</em>
+  </div>
+
+  <div class="grid-2">
+    <form id="caller-form" class="col">
+      <h2>1. Anrufer</h2>
+      <label>Telefonnummer
+        <input id="phone" name="phone" placeholder="+49 30 1234567" required>
+      </label>
+      <button type="button" id="lookup-btn" class="secondary">CRM-Lookup</button>
+      <div id="lookup-result" class="muted"></div>
+
+      <h2>2. Kunde &amp; Adresse</h2>
+      <label>Name <input id="name" required></label>
+      <div class="row">
+        <label class="grow">Straße <input id="street" required></label>
+        <label>Hausnr. <input id="house_number" required></label>
+      </div>
+      <div class="row">
+        <label>PLZ <input id="plz" pattern="\d{5}" required></label>
+        <label class="grow">Ort <input id="city" required></label>
+      </div>
+      <label>Notiz (Etage, Klingel) <input id="notes"></label>
+    </form>
+
+    <div class="col">
+      <h2>3. Bestellung</h2>
+      <table class="menu">
+        <thead><tr><th>Position</th><th>Preis</th><th>Menge</th></tr></thead>
+        <tbody>
+          {% for m in menu %}
+          <tr>
+            <td>{{ m.name }}</td>
+            <td class="num">{{ m.price_cents | cents }}</td>
+            <td><input type="number" min="0" value="0" data-menu-id="{{ m.id }}" data-price="{{ m.price_cents }}" class="qty"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="total">Gesamt: <span id="total">0,00 €</span></div>
+      <button id="submit-btn" class="primary">Bestellung an Konfirmierer senden</button>
+      <div id="submit-result"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+const menu = {{ menu | map(attribute='id') | list | tojson }};
+
+function recalcTotal() {
+  let total = 0;
+  document.querySelectorAll('.qty').forEach(inp => {
+    const q = parseInt(inp.value || "0", 10);
+    const p = parseInt(inp.dataset.price, 10);
+    if (q > 0) total += q * p;
+  });
+  document.getElementById('total').textContent =
+    (Math.floor(total/100)).toString() + ',' + (total % 100).toString().padStart(2,'0') + ' €';
+}
+document.querySelectorAll('.qty').forEach(i => i.addEventListener('input', recalcTotal));
+
+document.getElementById('lookup-btn').addEventListener('click', async () => {
+  const phone = document.getElementById('phone').value.trim();
+  const resEl = document.getElementById('lookup-result');
+  if (!phone) { resEl.textContent = "Telefon fehlt."; return; }
+  const fd = new FormData();
+  fd.append('phone', phone);
+  const r = await fetch('/call/lookup', { method: 'POST', body: fd });
+  const data = await r.json();
+  if (data.matched) {
+    const c = data.customer;
+    document.getElementById('name').value = c.name;
+    document.getElementById('street').value = c.street;
+    document.getElementById('house_number').value = c.house_number;
+    document.getElementById('plz').value = c.plz;
+    document.getElementById('city').value = c.city;
+    document.getElementById('notes').value = c.notes || '';
+    resEl.innerHTML = '<span class="chip ok">Stammkunde</span> ' +
+      'Verbale Namens-Prüfung ist erforderlich, bevor die Adresse am Telefon ' +
+      'vorgelesen wird (siehe Design-Guard R-B).';
+  } else {
+    resEl.innerHTML = '<span class="chip info">Erstanruf</span> Daten bitte vollständig aufnehmen.';
+  }
+});
+
+document.getElementById('submit-btn').addEventListener('click', async () => {
+  const items = [];
+  document.querySelectorAll('.qty').forEach(inp => {
+    const q = parseInt(inp.value || "0", 10);
+    if (q > 0) items.push({ menu_item_id: parseInt(inp.dataset.menuId, 10), qty: q });
+  });
+  const payload = {
+    phone: document.getElementById('phone').value.trim(),
+    name: document.getElementById('name').value.trim(),
+    address: {
+      street: document.getElementById('street').value.trim(),
+      house_number: document.getElementById('house_number').value.trim(),
+      plz: document.getElementById('plz').value.trim(),
+      city: document.getElementById('city').value.trim(),
+      notes: document.getElementById('notes').value.trim(),
+    },
+    items: items,
+  };
+  const resEl = document.getElementById('submit-result');
+  resEl.textContent = 'Sende…';
+  const r = await fetch('/call/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    resEl.innerHTML = '<p class="err">Fehler: ' + t + '</p>';
+    return;
+  }
+  const data = await r.json();
+  resEl.innerHTML = '<p class="ok">Bestellung #' + data.order_id +
+    ' erstellt (CRM: ' + data.crm_match_status + ', Call ' + data.call_id + '). ' +
+    '<a href="/confirmer/' + data.order_id + '">Zur Prüfung öffnen</a>.</p>';
+});
+</script>
+{% endblock %}

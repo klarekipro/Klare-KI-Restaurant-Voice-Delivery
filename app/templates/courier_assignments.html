@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Meine Aufträge{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Meine Aufträge</h1>
+  {% if not orders %}<p class="muted">Keine aktiven Aufträge.</p>{% endif %}
+  <ul class="assignments">
+    {% for o in orders %}
+    <li>
+      <a class="order-link" href="/courier/{{ o.id }}">
+        <div class="row space">
+          <strong>#{{ o.id }}</strong>
+          <span class="chip">{{ o.status }}</span>
+        </div>
+        <div>{{ o.street }} {{ o.house_number }}, {{ o.plz }} {{ o.city }}</div>
+        <div class="muted">Zugewiesen: {{ o.assigned_at }}</div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h2>Heute erledigt</h2>
+  {% if not done %}<p class="muted">Noch keine Lieferungen heute.</p>{% endif %}
+  <ul>
+    {% for d in done %}
+    <li>#{{ d.id }} · {{ d.total_cents | cents }} · <span class="muted">{{ d.delivered_at }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

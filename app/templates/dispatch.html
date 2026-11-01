@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Dispatch{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Fertig – Fahrer zuweisen</h1>
+  {% if not ready %}<p class="muted">Keine wartenden Bestellungen.</p>{% endif %}
+  <table>
+    <thead><tr><th>#</th><th>Kunde</th><th>Adresse</th><th>Summe</th><th>Fahrer</th></tr></thead>
+    <tbody>
+      {% for o in ready %}
+      <tr>
+        <td>#{{ o.id }}</td>
+        <td>{{ o.customer_name }}</td>
+        <td>{{ o.street }} {{ o.house_number }}, {{ o.plz }} {{ o.city }}</td>
+        <td class="num">{{ o.total_cents | cents }}</td>
+        <td>
+          <form method="post" action="/dispatch/{{ o.id }}/assign" class="inline">
+            <select name="courier_id">
+              {% for c in couriers %}
+              <option value="{{ c.id }}">{{ c.display_name }}</option>
+              {% endfor %}
+            </select>
+            <button class="primary">Zuweisen</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

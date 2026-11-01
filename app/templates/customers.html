@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Kunden{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Kunden</h1>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Telefon</th><th>Adresse</th><th>Notiz</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for c in customers %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td class="mono">{{ c.phone }}</td>
+        <td>{{ c.street }} {{ c.house_number }}, {{ c.plz }} {{ c.city }}</td>
+        <td class="muted">{{ c.notes }}</td>
+        <td>{% if c.trusted %}<span class="chip ok">Stammkunde</span>{% else %}<span class="chip info">Erstanruf</span>{% endif %}</td>
+        <td>
+          <details>
+            <summary class="link">bearbeiten</summary>
+            <form method="post" action="/customers/{{ c.id }}/edit" class="col">
+              <label>Name <input name="name" value="{{ c.name }}" required></label>
+              <label>Straße <input name="street" value="{{ c.street }}" required></label>
+              <label>Hausnummer <input name="house_number" value="{{ c.house_number }}" required></label>
+              <label>PLZ <input name="plz" value="{{ c.plz }}" required></label>
+              <label>Ort <input name="city" value="{{ c.city }}" required></label>
+              <label>Notiz <input name="notes" value="{{ c.notes }}"></label>
+              <button class="primary">Speichern</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

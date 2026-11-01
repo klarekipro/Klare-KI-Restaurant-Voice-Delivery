@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="row space">
+    <h1>Dashboard</h1>
+    <div class="range">
+      <a class="chip {% if range_ == 'today' %}active{% endif %}" href="/dashboard?range=today">Heute</a>
+      <a class="chip {% if range_ == '7d' %}active{% endif %}" href="/dashboard?range=7d">7 Tage</a>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Zubereitete Bestellungen</div>
+      <div class="kpi-value">{{ prepared }}</div>
+      <div class="muted small">`Recommendation:` Draft-Definition — siehe design/architecture.md §6.10</div>
+    </div>
+    <div class="kpi wide">
+      <div class="kpi-label">Zugestellt pro Fahrer</div>
+      <table>
+        <thead><tr><th>Fahrer</th><th>Lieferungen</th><th>Umsatz</th></tr></thead>
+        <tbody>
+          {% for c in per_courier %}
+          <tr>
+            <td>{{ c.display_name }}</td>
+            <td class="num">{{ c.delivered_count }}</td>
+            <td class="num">{{ c.gross_cents | cents }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Bestellsummen</div>
+      <div class="kpi-value">{{ totals.gross_delivered | cents }}</div>
+      <div class="muted small">zugestellt · aktiv (ohne Abbrüche): {{ totals.gross_active | cents }}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Tagesabschluss</div>
+      <ul class="plain">
+        <li>Bestellungen: <strong>{{ totals.orders_count or 0 }}</strong></li>
+        <li>Ø Ticket: <strong>{{ avg_ticket | cents }}</strong></li>
+        <li>Abbruchquote: <strong>{{ cancel_rate }}%</strong></li>
+        <li>Anteil KI: <strong>{{ ai_share }}%</strong></li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="hint">Metrik-Definitionen sind Entwürfe (Recommendation) laut
+    <code>design/architecture.md §6.10</code> — Ratifizierung über ADR-SA-6 vor Pilot.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Küche{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Aktive Küchen-Warteschlange</h1>
+  {% if not orders %}<p class="muted">Nichts in der Warteschlange.</p>{% endif %}
+  <div class="kitchen-grid">
+    {% for o in orders %}
+    <div class="order-card">
+      <div class="row space">
+        <strong>#{{ o.id }}</strong>
+        <span class="chip">{{ o.status }}</span>
+      </div>
+      <ul class="items">
+        {% for it in items_by_order[o.id] %}
+        <li><span class="qty">{{ it.qty }}×</span> {{ it.name_snapshot }}</li>
+        {% endfor %}
+      </ul>
+      <div class="muted">bestätigt: {{ o.confirmed_at }}</div>
+      <div class="actions">
+        {% if o.status == 'confirmed' %}
+        <form method="post" action="/kitchen/{{ o.id }}/start" class="inline">
+          <button class="secondary">Start</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/kitchen/{{ o.id }}/ready" class="inline">
+          <button class="primary">Fertig</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2>Fertig – wartet auf Fahrer</h2>
+  {% if not ready %}<p class="muted">Keine wartenden Bestellungen.</p>{% endif %}
+  <ul class="shelf">
+    {% for r in ready %}
+    <li>#{{ r.id }} <span class="muted">fertig {{ r.ready_at }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

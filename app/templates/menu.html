@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Speisekarte{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Speisekarte</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Beschreibung</th>
+        <th>Preis</th>
+        <th>Status</th>
+        {% if can_edit %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td class="muted">{{ item.description }}</td>
+        <td class="num">{{ item.price_cents | cents }}</td>
+        <td>{% if item.available %}<span class="chip ok">verfügbar</span>{% else %}<span class="chip warn">aus</span>{% endif %}</td>
+        {% if can_edit %}
+        <td>
+          <form method="post" action="/menu/{{ item.id }}/toggle">
+            <button class="link">umschalten</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if can_edit %}
+<section class="card">
+  <h2>Neue Position</h2>
+  <form method="post" action="/menu/new" class="row">
+    <label>Name <input name="name" required></label>
+    <label>Beschreibung <input name="description"></label>
+    <label>Preis (EUR) <input name="price_eur" placeholder="9,90" required></label>
+    <button class="primary">Hinzufügen</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

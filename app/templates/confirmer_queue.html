@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Konfirmierer{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Eingehende &amp; aktive Bestellungen</h1>
+  {% if not orders %}
+    <p class="muted">Keine offenen Bestellungen.</p>
+  {% endif %}
+  <table>
+    <thead><tr><th>#</th><th>Status</th><th>Kunde</th><th>Telefon</th><th>Summe</th><th>Erstellt</th><th></th></tr></thead>
+    <tbody>
+      {% for o in orders %}
+      <tr>
+        <td>#{{ o.id }}</td>
+        <td><span class="chip">{{ o.status }}</span></td>
+        <td>{{ o.customer_name }}</td>
+        <td class="mono">{{ o.customer_phone }}</td>
+        <td class="num">{{ o.total_cents | cents }}</td>
+        <td class="muted">{{ o.created_at }}</td>
+        <td><a href="/confirmer/{{ o.id }}">öffnen</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Klare KI — Restaurant{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <a href="/">Klare KI · Restaurant</a>
+  </div>
+  <nav class="nav">
+    {% if user %}
+      {% if user.role in ('owner','confirmer') %}
+        <a href="/call">Anruf</a>
+        <a href="/confirmer">Konfirmierer</a>
+        <a href="/dispatch">Dispatch</a>
+      {% endif %}
+      {% if user.role in ('owner','kitchen') %}
+        <a href="/kitchen">Küche</a>
+      {% endif %}
+      {% if user.role in ('owner','courier') %}
+        <a href="/courier">Fahrer</a>
+      {% endif %}
+      {% if user.role == 'owner' %}
+        <a href="/dashboard">Dashboard</a>
+        <a href="/menu">Speisekarte</a>
+        <a href="/customers">Kunden</a>
+      {% endif %}
+      {% if user.role == 'confirmer' %}
+        <a href="/menu">Speisekarte</a>
+        <a href="/customers">Kunden</a>
+      {% endif %}
+    {% endif %}
+  </nav>
+  <div class="user">
+    {% if user %}
+      <span>{{ user.display_name }} · {{ user.role }}</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button class="link">Abmelden</button>
+      </form>
+    {% else %}
+      <a href="/login">Anmelden</a>
+    {% endif %}
+  </div>
+</header>
+<main class="container">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
