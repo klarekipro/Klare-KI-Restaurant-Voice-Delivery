@@ -1,0 +1,11 @@
+# Mission 03 independent validation
+
+Source: f73b97b76f7ab0694aa1fbb0a8f87c0d73e260bb (PR #2 verified head). Existing delivery report reviewed; previous PASS claims were not used as evidence.
+
+Reproduction in separate worktree: `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`, `.venv/bin/python -m pytest -q`: original 5 tests passed. After hardening: 22 passed. One Starlette/httpx deprecation warning remains; `.venv/bin/python -m pip check` reports no broken requirements. Transient implementation test failures (Path.open opener argument and snapshot SQL placeholder count) were corrected before publication.
+
+`.venv/bin/python scripts/local_acceptance.py`: PASS. Starts Uvicorn at 127.0.0.1 on temporary port/database, makes actual HTTP requests, verifies manager pages, new order, returning lookup, approval, kitchen visibility/ready, assignment, courier navigation URL, en_route, delivered/closed. Terminates and restarts server process, verifies stored status, exact cents and single closed event. Does not contact Google Maps. Rerunnable synthetic scenario only, no customer data.
+
+Regression coverage: malformed JSON/items, rejected empty/nonexistent/negative/string/bool quantities and rollback, empty approval, duplicate transitions, key replay and conflicting replay, stable contact and menu-price snapshots, anonymous business writes, other-courier read/write denial, cross-origin login and public-key cookie forgery rejection, delivery-day report across creation-day cutoff. Baseline lifecycle/repeat/rejection/persistence tests retained.
+
+Limits: no browser automation or physical mobile viewport verification; no real telephony/audio, paid APIs or external navigator execution. Report test uses a fixed window; DST edge-day lengths and concurrent load require further coverage. Local accounts remain publicly documented demo passwords and app must not be exposed. Origin/Fetch-Metadata protection is not a full token-based CSRF implementation. No login throttling. Failed-delivery recovery and order-specific address correction remain product gaps. Suitable for a supervised local HTTP demonstration; browser demonstration requires the remaining manual walkthrough.

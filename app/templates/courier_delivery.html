@@ -37,7 +37,7 @@
     {% if bundle.order.status == 'assigned' %}
     <form method="post" action="/courier/{{ bundle.order.id }}/start"><button class="secondary big">Unterwegs</button></form>
     {% endif %}
-    {% if bundle.order.status in ('assigned','en_route') %}
+    {% if bundle.order.status == 'en_route' %}
     <form method="post" action="/courier/{{ bundle.order.id }}/delivered"><button class="primary big">Zugestellt</button></form>
     <form method="post" action="/courier/{{ bundle.order.id }}/failed" class="inline">
       <input name="reason" placeholder="Grund" required>

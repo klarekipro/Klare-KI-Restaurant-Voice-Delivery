@@ -37,7 +37,7 @@ python3 -m venv .venv
 
 Die SQLite-Datei liegt standardmäßig unter `data/mvp.sqlite`. Alternative Lage über die Umgebungsvariable `KLARE_DB_PATH` (wird auch von den Tests genutzt).
 
-Die Sitzungs-Signatur verwendet ein Dev-Secret. Für echte Umgebungen `KLARE_SESSION_SECRET` setzen.
+Die Sitzungs-Signatur verwendet einen automatisch erzeugten lokalen Schlüssel neben der Datenbank (`*.session-secret`, Modus 0600, nicht committen). Alternativ `KLARE_SESSION_SECRET` setzen. Nur an 127.0.0.1 binden; Demo-Passwörter niemals öffentlich bereitstellen.
 
 ## Demo-Konten
 
@@ -170,3 +170,7 @@ Diese Mechanismen ersetzen keine DPIA und keine Rechtsprüfung (`Needs legal rev
 ## Lizenz & Nutzungshinweise
 
 Dieses MVP ist ein Experiment. Es darf nicht ohne vorherige Rechts-, Datenschutz- und Produktprüfung mit echten Kundendaten betrieben werden.
+
+## Codex local acceptance
+
+`.venv/bin/python scripts/local_acceptance.py` starts a temporary loopback-only server with a synthetic database, exercises delivery and restarts the process. Run `.venv/bin/python -m pytest -q` for negative and security regressions. Handoff: `docs/agents/CURRENT_STATE.md`.

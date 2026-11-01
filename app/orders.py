@@ -41,6 +41,15 @@ def log_event(conn, order_id: int, event: str,
 
 def transition(conn, order_id: int, next_state: str,
                actor_user_id: Optional[int] = None, detail: str = "") -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            transition(conn, order_id, next_state, actor_user_id, detail)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        return
     row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
     if row is None:
         raise StateError(f"order {order_id} not found")
@@ -92,8 +101,8 @@ def fetch_order(order_id: int) -> Optional[dict]:
         customer = None
         if order["customer_id"]:
             customer = conn.execute(
-                "SELECT * FROM customers WHERE id = ?",
-                (order["customer_id"],),
+                "SELECT * FROM order_contacts WHERE order_id = ?",
+                (order_id,),
             ).fetchone()
         events = conn.execute(
             "SELECT * FROM order_events WHERE order_id = ? ORDER BY id",
