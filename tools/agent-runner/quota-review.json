@@ -1,0 +1,17 @@
+{
+  "name": "Authorized read-only review with automatic quota resume",
+  "source": "8471c4d5215b80cb260a546d339291afe727630e",
+  "prompt": "Perform a bounded read-only review of the simulator retry behavior and current handoff state. Do not edit files or install dependencies. Report findings and explicitly identify browser/mobile checks as unverified unless actually executed. Return task-scoped structured output, not a claim of product readiness.",
+  "checks": ["pytest", "acceptance", "simulator"],
+  "python": ".venv/bin/python",
+  "provider": "claude",
+  "fallback": true,
+  "review_fallback": true,
+  "auto_resume_quota": true,
+  "quota_probe_authorized": true,
+  "max_seconds": 86400,
+  "max_invocations": 6,
+  "max_retries": 0,
+  "max_failures": 4,
+  "max_concurrent": 1
+}

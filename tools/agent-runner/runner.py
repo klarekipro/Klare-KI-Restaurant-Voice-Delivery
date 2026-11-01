@@ -15,15 +15,19 @@ import sys
 import tempfile
 import time
 import uuid
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import quota
 
 SCHEMA = {'type':'object','properties':{'status':{'type':'string','enum':['done','repair','approval','limited']},'summary':{'type':'string'},'findings':{'type':'array','items':{'type':'string'}}},'required':['status','summary','findings'],'additionalProperties':False}
-STATES = {'QUEUED','RUNNING','VALIDATING','COMPLETED','RETRYABLE_FAILURE','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'}
+STATES = {'QUEUED','RUNNING','VALIDATING','COMPLETED','RETRYABLE_FAILURE','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED','WAITING_QUOTA','STOPPED'}
 EDGES = {
- 'QUEUED': {'RUNNING','FAILED','WAITING_APPROVAL','CANCELLED'},
- 'RUNNING': {'VALIDATING','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'},
- 'VALIDATING': {'QUEUED','RETRYABLE_FAILURE','COMPLETED','WAITING_APPROVAL','FAILED','CANCELLED'},
- 'RETRYABLE_FAILURE': {'RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
- 'PROVIDER_LIMITED': {'VALIDATING','RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'QUEUED': {'WAITING_QUOTA','RUNNING','FAILED','WAITING_APPROVAL','CANCELLED'},
+ 'RUNNING': {'WAITING_QUOTA','VALIDATING','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'VALIDATING': {'WAITING_QUOTA','QUEUED','RETRYABLE_FAILURE','COMPLETED','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'RETRYABLE_FAILURE': {'WAITING_QUOTA','RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'PROVIDER_LIMITED': {'WAITING_QUOTA','VALIDATING','RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'WAITING_QUOTA': {'VALIDATING','QUEUED','WAITING_APPROVAL','FAILED','CANCELLED','STOPPED'},
+ 'STOPPED': set(),
  'WAITING_APPROVAL': {'QUEUED','CANCELLED'}, 'FAILED': set(), 'COMPLETED': set(), 'CANCELLED': set()
 }
 CHECKS = {'simulator': ['node',str(Path(__file__).with_name('check_simulator.cjs').resolve()),'app/templates/call_simulator.html'], 'compile': ['{python}','-m','compileall','-q','app'], 'pytest':['{python}','-m','pytest','-q'], 'acceptance':['{python}','scripts/local_acceptance.py']}
@@ -60,7 +64,7 @@ class Store:
         self.path=Path(path).resolve();self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         self.c=sqlite3.connect(self.path,timeout=10,isolation_level=None);self.c.row_factory=sqlite3.Row
         os.chmod(self.path,0o600)
-        self.c.execute('PRAGMA journal_mode=WAL');self.c.executescript(DDL)
+        self.c.execute('PRAGMA journal_mode=WAL');self.c.executescript(DDL+quota.DDL)
         # Recover machine evidence from early runner versions without clearing approval holds.
         for row in self.c.execute("SELECT id,provider,error FROM attempts WHERE error LIKE '%; events: %'").fetchall():
             try: envelope=json.loads(row['error'].split('; events: ',1)[1])
@@ -121,8 +125,8 @@ def isolation_probe(worktree,scratch):
     finally: forbidden.unlink(missing_ok=True)
 
 
-def codex_options(worktree,scratch):
-    roots={'/':'deny', ':minimal':'read', str(Path(worktree).resolve()):'write', str(Path(scratch).resolve()):'write', '/opt/homebrew':'read'}
+def codex_options(worktree,scratch,read_only=False):
+    roots={'/':'deny', ':minimal':'read', str(Path(worktree).resolve()):'read' if read_only else 'write', str(Path(scratch).resolve()):'write', '/opt/homebrew':'read'}
     for flag in ('--git-dir','--git-common-dir'):
         value=Path(git(worktree,'rev-parse',flag));roots[str(value.resolve() if value.is_absolute() else (Path(worktree)/value).resolve())]='read'
     for command in ('node','codex'):
@@ -132,17 +136,17 @@ def codex_options(worktree,scratch):
     return ['-c','default_permissions="runner"','-c','permissions.runner.filesystem='+table,'-c','permissions.runner.network.enabled=false']
 
 
-def codex_probe(worktree,scratch,env):
+def codex_probe(worktree,scratch,env,read_only=False):
     forbidden=Path.home()/('.agent-runner-probe-'+uuid.uuid4().hex);forbidden.write_text('canary')
     try:
         script='import pathlib,sys; p=pathlib.Path(sys.argv[1]);\ntry: p.read_text()\nexcept PermissionError: pass\nelse: sys.exit(7)\ntry: p.write_text("bad")\nexcept PermissionError: pass\nelse: sys.exit(8)\nprint("isolated")'
-        result=run(['codex','sandbox',*codex_options(worktree,scratch),'-P','runner','-C',str(worktree),sys.executable,'-c',script,str(forbidden)],env=env,timeout=20)
+        result=run(['codex','sandbox',*codex_options(worktree,scratch,read_only),'-P','runner','-C',str(worktree),sys.executable,'-c',script,str(forbidden)],env=env,timeout=20)
         if result.returncode or 'isolated' not in result.stdout: raise Hold('native Codex read/write isolation probe failed: '+result.stderr[-1000:])
     finally: forbidden.unlink(missing_ok=True)
 
 
 class CLIProvider:
-    def execute(self,provider,worktree,prompt,timeout,scratch):
+    def execute(self,provider,worktree,prompt,timeout,scratch,probe=False):
         scratch=Path(scratch);home=scratch/'home';home.mkdir(exist_ok=True)
         (home/'.codex').mkdir(exist_ok=True);(home/'.claude').mkdir(exist_ok=True)
         # Provider authentication only. Never inherit shell tokens or production credentials.
@@ -163,10 +167,12 @@ class CLIProvider:
             args=['claude','-p','--output-format','json','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
         else:
             args=['codex','exec','--ignore-user-config','--ignore-rules','--disable','apps','--disable','browser_use','--disable','computer_use','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
+        if provider=='claude' and probe:
+            args[args.index('--tools')+1]='';args[args.index('--allowedTools')+1]=''
         if provider=='claude': args=['sandbox-exec','-p',profile(worktree,scratch),*args]
         else:
-            codex_probe(worktree,scratch,env)
-            args=args[:2]+codex_options(worktree,scratch)+args[2:]
+            codex_probe(worktree,scratch,env,probe)
+            args=args[:2]+codex_options(worktree,scratch,probe)+args[2:]
         start=time.monotonic()
         proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
         if getattr(self,'on_start',None): self.on_start(proc.pid)
@@ -184,34 +190,44 @@ class CLIProvider:
             try: proc.communicate(timeout=5)
             except subprocess.TimeoutExpired: os.killpg(proc.pid,signal.SIGKILL);proc.communicate()
             raise
-        usage={};result=None;limited=False;error=stderr[-2000:]
+        usage={};result=None;limited=False;retry_at=None;quota_code=None;error=stderr[-2000:]
         try:
             if provider=='claude':
                 envelope=json.loads(stdout);usage={k:envelope[k] for k in ('usage','total_cost_usd') if k in envelope}
                 result=envelope.get('structured_output')
                 # Only documented machine error codes; unknown nonzero exits are not limits.
                 limited=envelope.get('error')=='rate_limit_error' or (envelope.get('is_error') is True and envelope.get('api_error_status')==429)
+                if limited:
+                    retry_at=quota.retry_time(envelope,time.time());quota_code=envelope.get('api_error_status') or envelope.get('error')
                 if envelope.get('is_error'): error=str(envelope.get('result','provider error'))[-2000:]
             else:
                 for line in stdout.splitlines():
                     e=json.loads(line)
                     if e.get('type')=='turn.completed': usage=e.get('usage',{})
                     err=e.get('error',{})
-                    if isinstance(err,dict) and err.get('code') in ('usage_limit_reached','rate_limit_exceeded'): limited=True
+                    if isinstance(err,dict) and err.get('code') in ('usage_limit_reached','rate_limit_exceeded'):
+                        limited=True;quota_code=err['code'];retry_at=quota.retry_time(err,time.time())
                 if output.exists(): result=json.loads(output.read_text())
         except (ValueError,TypeError): error='malformed provider JSON'
         valid=isinstance(result,dict) and set(result)=={'status','summary','findings'} and result['status'] in ('done','repair','approval','limited') and isinstance(result['summary'],str) and isinstance(result['findings'],list) and all(isinstance(x,str) for x in result['findings'])
         if not valid: error+='; structured output missing/invalid; events: '+stdout[-4000:]
-        return dict(exit_code=proc.returncode,result=result if valid else None,usage=usage,error=error,duration=time.monotonic()-start,limited=limited)
+        return dict(exit_code=proc.returncode,result=result if valid else None,usage=usage,error=error,duration=time.monotonic()-start,limited=limited,retry_at=retry_at,quota_code=quota_code)
+
+    def probe(self,provider,worktree,timeout,scratch):
+        if provider=='claude': isolation_probe(worktree,scratch)
+        return self.execute(provider,worktree,'Availability probe only. Do not inspect files or use tools. Return status done, summary availability request answered, findings empty. No other work.',timeout,scratch,probe=True)
 
 class Engine:
+    Hold=Hold
+    git_status=staticmethod(lambda work:git(work,'status','--porcelain'))
+    git_head=staticmethod(lambda work:git(work,'rev-parse','HEAD'))
     def __init__(self,store,provider=None,validator=None):
         self.s=store;self.c=store.c;self.provider=provider or CLIProvider();self.validator=validator
     def task(self,m,p,kind,prompt,retries=0):
         return self.c.execute('INSERT INTO tasks(mission,provider,state,kind,prompt,retries) VALUES(?,?,\'QUEUED\',?,?,?)',(m,p,kind,prompt,retries)).lastrowid
     def start(self,definition,repo,mission_id=None):
         d=json.loads(Path(definition).read_text())
-        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks'}
+        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks','auto_resume_quota','quota_probe_authorized'}
         if set(d)-allowed: raise Hold('unknown mission options')
         if not all(x in CHECKS for x in d.get('checkpoint_checks',d.get('checks',[]))): raise Hold('checkpoint command outside allowlist')
         if not all(x in CHECKS for x in d.get('checks',[])): raise Hold('validation command outside allowlist')
@@ -222,6 +238,7 @@ class Engine:
         m=mission_id or uuid.uuid4().hex[:12];work=self.s.path.parent/'worktrees'/m;work.parent.mkdir(exist_ok=True)
         git(repo,'worktree','add','-b','runner/'+m,str(work),d['source'])
         self.c.execute('INSERT INTO missions(id,state,definition,worktree,started) VALUES(?,\'QUEUED\',?,?,?)',(m,json.dumps(d),str(work),time.time()))
+        quota.authorize(self,m,d)
         for unsafe in ('.mcp.json','.claude/settings.json','.claude/settings.local.json','.codex/config.toml'):
             if (work/unsafe).exists():
                 self.s.hold(m,'project execution configuration requires review: '+unsafe)
@@ -275,7 +292,7 @@ class Engine:
         task=self.c.execute('SELECT * FROM tasks WHERE id=?',(cp['task'],)).fetchone()
         other='codex' if task['provider']=='claude' else 'claude'
         available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
-        if not d.get('fallback') or (available and not available[0]): raise Hold('checkpoint preserved; no permitted available continuation provider')
+
         if cp['phase']=='PRESERVED':
             if git(work,'rev-parse','HEAD')!=cp['base_sha']: raise Hold('checkpoint base changed before validation')
             self.s.state(m,'VALIDATING')
@@ -304,6 +321,10 @@ class Engine:
         committed_digest=hashlib.sha256(json.dumps(committed_manifest,sort_keys=True).encode()).hexdigest()
         if committed_digest!=cp['digest']: raise Hold('committed tree differs from validated checkpoint')
         if git(work,'rev-parse','HEAD')!=cp['commit_sha'] or git(work,'status','--porcelain'): raise Hold('checkpoint commit no longer matches clean worktree')
+        candidates=([other,task['provider']] if d.get('fallback') else [task['provider']])
+        selected=next((p for p in candidates if not (self.c.execute('SELECT available FROM availability WHERE provider=?',(p,)).fetchone() or {'available':1})['available']==0),None)
+        if selected is None: return quota.enter(self,m,task,work,d)
+        other=selected
         self.c.execute('BEGIN IMMEDIATE')
         try:
             payload={'checkpoint':cp['id'],'commit':cp['commit_sha'],'classification':'incomplete-checks-passed','completion_checks_pending':d.get('checks',[]),'retry_at':None}
@@ -433,19 +454,22 @@ class Engine:
             row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
             if not self.queue_review(m,completed,completed['attempt_id'],Path(row['worktree']),json.loads(row['definition']),json.loads(completed['result'])): return False
         # A durably captured limit outcome can be reconciled without replaying the CLI.
-        pending=self.c.execute("SELECT a.id,a.task,a.provider,o.payload FROM attempts a JOIN tasks t ON t.id=a.task JOIN outcomes o ON o.attempt=a.id LEFT JOIN checkpoints p ON p.attempt=a.id WHERE t.mission=? AND p.id IS NULL",(m,)).fetchall()
+        pending=self.c.execute("SELECT a.id,a.task,a.provider,o.payload FROM attempts a JOIN tasks t ON t.id=a.task JOIN outcomes o ON o.attempt=a.id LEFT JOIN checkpoints p ON p.attempt=a.id WHERE t.mission=? AND p.id IS NULL AND a.id NOT IN (SELECT attempt FROM probe_attempts)",(m,)).fetchall()
         for a in pending:
             if not json.loads(a['payload']).get('limited'): continue
+            quota.confirm(self,a['provider'],json.loads(a['payload']))
             row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
             self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a['id'],))
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed captured limit; retry time unknown',NULL)",(a['provider'],))
             if row['state']!='PROVIDER_LIMITED': self.s.state(m,'PROVIDER_LIMITED')
             task=self.c.execute('SELECT * FROM tasks WHERE id=?',(a['task'],)).fetchone()
-            try: self.checkpoint(m,a['id'],task,Path(row['worktree']),json.loads(row['definition']))
+            try:
+                if not self.checkpoint(m,a['id'],task,Path(row['worktree']),json.loads(row['definition'])):return False
             except Exception as exc: self.s.hold(m,'captured limit checkpoint unsafe: '+str(exc));return False
         for cp in self.c.execute("SELECT attempt FROM checkpoints WHERE mission=? AND phase!='HANDED_OFF'",(m,)).fetchall():
             row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
-            try: self.continue_checkpoint(m,cp['attempt'],Path(row['worktree']),json.loads(row['definition']))
+            try:
+                if not self.continue_checkpoint(m,cp['attempt'],Path(row['worktree']),json.loads(row['definition'])):return False
             except Hold as exc: self.s.hold(m,str(exc));return False
         # Unknown child state is never automatically re-executed. Operator must inspect preserved worktree.
         running=self.c.execute("SELECT id FROM attempts WHERE task IN (SELECT id FROM tasks WHERE mission=?) AND state='RUNNING'",(m,)).fetchall()
@@ -454,9 +478,9 @@ class Engine:
             self.s.hold(m,'interrupted attempt; inspect preserved worktree and terminate orphan CLI before approval')
             return False
         return True
-    def validate(self,m,a,work,d):
+    def validate(self,m,a,work,d,record_receipt=True):
         before=self.fingerprint(work)
-        self.c.execute('DELETE FROM receipts WHERE attempt=?',(a,))
+        if record_receipt: self.c.execute('DELETE FROM receipts WHERE attempt=?',(a,))
         ok=True
         for name in d.get('checks',[]):
             if self.validator: r=self.validator(name,work)
@@ -476,11 +500,11 @@ class Engine:
                     r=run(['sandbox-exec','-p',sandbox,*args],work,env=env,timeout=min(120,remaining))
             self.c.execute('INSERT INTO tests(mission,attempt,name,passed,exit_code,output) VALUES(?,?,?,?,?,?)',(m,a,name,int(r.returncode==0),r.returncode,(r.stdout+r.stderr)[-12000:]));ok &= r.returncode==0
         ok=bool(ok and d.get('checks') and self.fingerprint(work)==before)
-        if ok: self.c.execute('INSERT INTO receipts VALUES(?,?,?)',(a,before,git(work,'rev-parse','HEAD')))
+        if ok and record_receipt: self.c.execute('INSERT INTO receipts VALUES(?,?,?)',(a,before,git(work,'rev-parse','HEAD')))
         return ok
     def step(self,m):
         row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone();d=json.loads(row['definition']);work=Path(row['worktree'])
-        if row['state'] in ('COMPLETED','FAILED','CANCELLED','WAITING_APPROVAL') or row['paused']: return False
+        if row['state'] in ('COMPLETED','FAILED','CANCELLED','STOPPED','WAITING_APPROVAL','WAITING_QUOTA') or row['paused']: return False
         if not self.recover(m): return False
         attempts=self.c.execute('SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=?',(m,)).fetchone()[0]
         if time.time()-row['started']>=d.get('max_seconds',600) or attempts>=d.get('max_invocations',4): self.s.state(m,'FAILED');self.s.event(m,'limit','duration or invocations');return False
@@ -494,7 +518,16 @@ class Engine:
         if not t: self.s.hold(m,'no dispatchable task');return False
         if d.get('approval_required'): self.s.hold(m,'mission requests human approval');return False
         avail=self.c.execute('SELECT * FROM availability WHERE provider=?',(t['provider'],)).fetchone()
-        if avail and not avail['available']: self.s.hold(m,'selected provider unavailable; retry time '+str(avail['retry_at']));return False
+        if avail and not avail['available']:
+            other='codex' if t['provider']=='claude' else 'claude'
+            alternate=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
+            confirmed=self.c.execute("SELECT 1 FROM quota_signals WHERE provider=? AND status='limited'",(t['provider'],)).fetchone()
+            if confirmed and d.get('fallback') and (t['kind']!='review' or d.get('review_fallback')) and alternate and alternate[0]:
+                self.c.execute('UPDATE tasks SET provider=? WHERE id=?',(other,t['id']));t=self.c.execute('SELECT * FROM tasks WHERE id=?',(t['id'],)).fetchone()
+            elif confirmed:
+                try:return quota.enter(self,m,t,work,d)
+                except Exception as exc:self.s.hold(m,'quota wait unsafe: '+str(exc));return False
+            else:self.s.hold(m,'unavailable provider without confirmed quota signal');return False
         if git(work,'status','--porcelain'): self.s.hold(m,'dirty task worktree; preserved for inspection');return False
         self.s.state(m,'RUNNING')
         a=self.c.execute("INSERT INTO attempts(task,provider,state,started) VALUES(?,?,'RUNNING',?)",(t['id'],t['provider'],time.time())).lastrowid
@@ -520,6 +553,7 @@ class Engine:
         except BaseException: self.c.execute('ROLLBACK');raise
         self.checkpoint_hook('OUTCOME_CAPTURED')
         if r.get('limited'):
+            quota.confirm(self,t['provider'],r)
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed provider limit; retry time unknown',NULL)",(t['provider'],));self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a,));self.s.state(m,'PROVIDER_LIMITED')
             try: return self.checkpoint(m,a,t,work,d)
             except (Hold,Exception) as exc:
@@ -535,6 +569,7 @@ class Engine:
             self.s.hold(m,'provider authentication unavailable in isolated HOME; no broad credential access fallback')
             return False
         result=r['result']
+        if r['exit_code']==0 and result and result['status']=='done': quota.recovered(self,t['provider'])
         if result and result['status'] in ('approval','limited'):
             self.c.execute("UPDATE attempts SET state='FAILED' WHERE id=?",(a,));self.s.hold(m,'provider requested approval or unconfirmed limit: '+result['summary']);return False
         self.s.state(m,'VALIDATING')
@@ -589,9 +624,13 @@ class Engine:
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held','followup']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held','followup','scheduler','quota']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');parser.add_argument('--output');parser.add_argument('--authorize-activation');args=parser.parse_args()
+    signal.signal(signal.SIGTERM,lambda *args:(_ for _ in ()).throw(KeyboardInterrupt()))
     s=Store(args.state);e=Engine(s)
     try:
+        if args.command in ('scheduler','quota'):
+            import scheduler
+            scheduler.command(e,args,Path(__file__).resolve());return
         if args.command=='followup':
             if not args.mission: parser.error('followup requires failed mission id')
             with s.lock(): m=e.followup(args.mission,args.approval_note)
