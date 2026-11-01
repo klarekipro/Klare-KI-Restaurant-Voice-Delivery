@@ -70,7 +70,7 @@ def profile(worktree,scratch,network=True):
         found=shutil.which(cli)
         if found: paths.add(Path(found).resolve().parent.parent)
     # Deny all user-home reads; explicitly open only this task and installed runtime.
-    text='(version 1)(allow default)(deny file-read*)(allow file-read-metadata)(deny file-write*)'
+    text='(version 1)(allow default)(deny file-read*)(allow file-read* (literal "/"))(allow file-read-metadata)(deny file-write*)'
     for system in ('/usr','/bin','/sbin','/System','/Library','/opt/homebrew','/private/etc','/private/var/db','/dev'):
         text+=f'(allow file-read* (subpath {q(system)}))'
     for flag in ('--git-dir','--git-common-dir'):
