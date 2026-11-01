@@ -94,6 +94,26 @@ def isolation_probe(worktree,scratch):
     finally: forbidden.unlink(missing_ok=True)
 
 
+def codex_options(worktree,scratch):
+    roots={'/':'deny', ':minimal':'read', str(Path(worktree).resolve()):'write', str(Path(scratch).resolve()):'write', '/opt/homebrew':'read'}
+    for flag in ('--git-dir','--git-common-dir'):
+        value=Path(git(worktree,'rev-parse',flag));roots[str(value.resolve() if value.is_absolute() else (Path(worktree)/value).resolve())]='read'
+    for command in ('node','codex'):
+        found=shutil.which(command)
+        if found: roots[str(Path(found).resolve().parent.parent)]='read'
+    table='{'+','.join(json.dumps(k)+'='+json.dumps(v) for k,v in roots.items())+'}'
+    return ['-c','default_permissions="runner"','-c','permissions.runner.filesystem='+table,'-c','permissions.runner.network.enabled=false']
+
+
+def codex_probe(worktree,scratch,env):
+    forbidden=Path.home()/('.agent-runner-probe-'+uuid.uuid4().hex);forbidden.write_text('canary')
+    try:
+        script='import pathlib,sys; p=pathlib.Path(sys.argv[1]);\ntry: p.read_text()\nexcept PermissionError: pass\nelse: sys.exit(7)\ntry: p.write_text("bad")\nexcept PermissionError: pass\nelse: sys.exit(8)\nprint("isolated")'
+        result=run(['codex','sandbox',*codex_options(worktree,scratch),'-P','runner','-C',str(worktree),sys.executable,'-c',script,str(forbidden)],env=env,timeout=20)
+        if result.returncode or 'isolated' not in result.stdout: raise Hold('native Codex read/write isolation probe failed: '+result.stderr[-1000:])
+    finally: forbidden.unlink(missing_ok=True)
+
+
 class CLIProvider:
     def execute(self,provider,worktree,prompt,timeout,scratch):
         scratch=Path(scratch);home=scratch/'home';home.mkdir(exist_ok=True)
@@ -115,8 +135,11 @@ class CLIProvider:
                 except ValueError: pass
             args=['claude','-p','--output-format','json','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
         else:
-            args=['codex','exec','--ignore-user-config','--ignore-rules','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--sandbox','workspace-write','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
-        args=['sandbox-exec','-p',profile(worktree,scratch),*args]
+            args=['codex','exec','--ignore-user-config','--ignore-rules','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
+        if provider=='claude': args=['sandbox-exec','-p',profile(worktree,scratch),*args]
+        else:
+            codex_probe(worktree,scratch,env)
+            args=args[:2]+codex_options(worktree,scratch)+args[2:]
         start=time.monotonic()
         proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
         if getattr(self,'on_start',None): self.on_start(proc.pid)
