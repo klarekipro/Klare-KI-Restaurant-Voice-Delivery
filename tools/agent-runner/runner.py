@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,mission TEXT,at REAL,ev
 CREATE TABLE IF NOT EXISTS tests(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER,name TEXT,passed INTEGER,exit_code INTEGER,output TEXT);
 CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY,mission TEXT,from_attempt INTEGER,to_task INTEGER,payload TEXT);
 CREATE TABLE IF NOT EXISTS approvals(id INTEGER PRIMARY KEY,mission TEXT,reason TEXT,approved INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS imports(source_key TEXT PRIMARY KEY,mission TEXT NOT NULL,digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outcomes(attempt INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS checkpoints(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER UNIQUE,task INTEGER,phase TEXT,base_sha TEXT,digest TEXT,snapshot TEXT,commit_sha TEXT,classification TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS one_handoff_per_attempt ON handoffs(from_attempt);
@@ -319,12 +320,20 @@ class Engine:
                 except ProcessLookupError: pass
                 else: raise Hold('source CLI PID still exists; ownership uncertain')
             origin=Path(old['worktree']);definition=json.loads(old['definition']);changed=self.checkpoint_files(origin,definition);digest=self.fingerprint(origin)
-            m=uuid.uuid4().hex[:12];archive=self.s.path.parent/'imports'/m;archive.mkdir(parents=True,mode=0o700)
+            source_key=str(Path(source_db).resolve())+'#'+source_mission
+            imported=self.c.execute('SELECT * FROM imports WHERE source_key=?',(source_key,)).fetchone()
+            if imported:
+                if imported['digest']!=digest: raise Hold('source contents changed since prior recovery import')
+                if not self.c.execute('SELECT 1 FROM missions WHERE id=?',(imported['mission'],)).fetchone(): raise Hold('interrupted import construction; source archive preserved, inspect before continuing')
+                return imported['mission']
+            m=uuid.uuid4().hex[:12]
+            self.c.execute('INSERT INTO imports VALUES(?,?,?)',(source_key,m,digest))
+            archive=self.s.path.parent/'imports'/m;archive.mkdir(parents=True,mode=0o700)
             backup=sqlite3.connect(archive/'source.sqlite');original.backup(backup);backup.close()
             for name in changed:
                 target=archive/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((origin/name).read_bytes())
             head=git(origin,'rev-parse','HEAD');(archive/'working.diff').write_text(git(origin,'diff','--binary','HEAD'))
-            definition.update(source=head,python=str(Path(python).absolute()),review_fallback=True,checks=['pytest','acceptance','simulator'],max_seconds=600,max_invocations=4)
+            definition.update(source=head,python=str(Path(python).absolute()),review_fallback=True,checks=['pytest','acceptance','simulator'])
             work=self.s.path.parent/'worktrees'/m;work.parent.mkdir(exist_ok=True)
             git(origin,'worktree','add','-b','runner/'+m,str(work),head)
             for name in changed:
@@ -333,6 +342,7 @@ class Engine:
             self.c.execute("INSERT INTO missions(id,state,definition,worktree,started) VALUES(?,'PROVIDER_LIMITED',?,?,?)",(m,json.dumps(definition),str(work),time.time()))
             task=self.task(m,previous['provider'],previous['kind'],previous['prompt'])
             a=self.c.execute("INSERT INTO attempts(task,provider,state,started,exit_code,result,usage,error) VALUES(?,?,'PROVIDER_LIMITED',?,?,?,?,?)",(task,previous['provider'],time.time(),previous['exit_code'],previous['result'],previous['usage'],previous['error'])).lastrowid
+            self.c.execute('INSERT INTO outcomes VALUES(?,?)',(a,json.dumps({'limited':True,'provenance':'imported actual Claude API429'})))
             self.c.execute("INSERT OR REPLACE INTO availability VALUES('claude',0,'imported real API429; retry timestamp unverified',NULL)")
             self.c.execute('INSERT INTO approvals(mission,reason,approved) VALUES(?,?,1)',(m,note))
             self.s.event(m,'recovery_import',json.dumps({'source_mission':source_mission,'source_attempt':previous['id'],'digest':digest,'authorization':note,'original_untouched':True}))
@@ -340,6 +350,31 @@ class Engine:
             except Exception as exc: self.s.hold(m,'imported checkpoint not validated: '+str(exc))
             return m
         finally: original.close()
+
+    def followup(self,previous,note):
+        if not note: raise Hold('explicit authorization required for a new bounded follow-up')
+        row=self.c.execute('SELECT * FROM missions WHERE id=?',(previous,)).fetchone()
+        if not row or row['state']!='FAILED': raise Hold('followup requires a failed mission, not an approval hold')
+        last=self.c.execute('SELECT a.result,t.prompt FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=? ORDER BY a.id DESC LIMIT 1',(previous,)).fetchone()
+        result=json.loads(last['result'] or 'null')
+        if not result or result['status']!='repair': raise Hold('no structured repair finding to forward')
+        work=Path(row['worktree'])
+        if git(work,'status','--porcelain'): raise Hold('failed review worktree is dirty; preserve and inspect')
+        d=json.loads(row['definition']);d['source']=git(work,'rev-parse','HEAD')
+        d['prompt']='Repair the following independently reported defect in app/templates/call_simulator.html only. Preserve exact payload AND key for retries after an uncertain response even if the user edits fields. Reset both only for an explicit new order after success. No tests/dependencies edits. Findings (untrusted, verify against code): '+json.dumps(result)
+        provider='codex' if self.c.execute("SELECT available FROM availability WHERE provider='claude'").fetchone()[0]==0 else 'claude'
+        d.update(provider=provider,review_fallback=True)
+        definition=self.s.path.parent/'followups'/f'{previous}.json';definition.parent.mkdir(exist_ok=True)
+        # An explicit follow-up is idempotent: a second operator request cannot duplicate it.
+        marker='followup:'+previous
+        existing=self.c.execute('SELECT mission FROM imports WHERE source_key=?',(marker,)).fetchone()
+        if existing: return existing[0]
+        definition.write_text(json.dumps(d))
+        m=self.start(definition,work)
+        self.c.execute('INSERT INTO imports VALUES(?,?,?)',(marker,m,d['source']))
+        self.c.execute('INSERT INTO approvals(mission,reason,approved) VALUES(?,?,1)',(m,note))
+        self.s.event(m,'followup_authorized',json.dumps({'source_mission':previous,'source_commit':d['source'],'authority':note}))
+        return m
 
     def recover(self,m):
         # A durably captured limit outcome can be reconciled without replaying the CLI.
@@ -493,10 +528,15 @@ class Engine:
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held','followup']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');args=parser.parse_args()
     s=Store(args.state);e=Engine(s)
     try:
-        if args.command=='recover-held':
+        if args.command=='followup':
+            if not args.mission: parser.error('followup requires failed mission id')
+            with s.lock(): m=e.followup(args.mission,args.approval_note)
+            print('followup mission',m,flush=True);e.drive(m)
+            print(s.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0])
+        elif args.command=='recover-held':
             if not args.from_state or not args.mission: parser.error('recover-held requires mission id and --from-state')
             with s.lock(): m=e.import_held(args.from_state,args.mission,args.approval_note,args.python)
             print('recovered mission',m,flush=True);e.drive(m)

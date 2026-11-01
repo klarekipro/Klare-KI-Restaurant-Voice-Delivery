@@ -24,8 +24,10 @@ vm.createContext(ctx);vm.runInContext(code,ctx);
 (async()=>{
   const submit=ids['submit-btn'].callbacks.click;
   mode='offline';await submit();assert.equal(ids['submit-btn'].disabled,false);assert.match(ids['submit-result'].textContent,/offline/);
+  qty.value='2'; // User edited the form after an uncertain network outcome.
   mode='success';let first=submit();await submit();await first;
   assert.equal(calls.length,2,'double click must not add a request');
+  assert.equal(calls[0].body,calls[1].body,'uncertain retry must retain the exact original payload despite form edits');
   assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key'],'uncertain retry must retain key');
   assert.equal(ids['submit-btn'].disabled,true);
   ids['new-order-btn'].callbacks.click();assert.equal(qty.value,'0');assert.equal(ids['submit-btn'].disabled,false);

@@ -140,6 +140,22 @@ e.checkpoint_hook=crash;e.drive(sys.argv[3])
         e.validator=mutate;e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
         self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],0)
 
+    def test_held_import_is_idempotent_and_preserves_source(self):
+        e,old,fake=self.limited_edit()
+        self.store.c.execute("INSERT INTO availability VALUES('codex',0,'test unavailable',NULL)")
+        e.drive(old);self.assertEqual(self.state(old),'WAITING_APPROVAL')
+        self.store.c.execute('UPDATE attempts SET error=? WHERE task IN (SELECT id FROM tasks WHERE mission=?)',('; events: '+json.dumps({'is_error':True,'api_error_status':429}),old))
+        origin=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(old,)).fetchone()[0]);before=e.fingerprint(origin)
+        target=r.Store(self.root/'recovery/state.sqlite')
+        try:
+            resumed=r.Engine(target,Fake(response(),response()),lambda *a:subprocess.CompletedProcess([],0,'',''))
+            m=resumed.import_held(self.store.path,old,'explicit test recovery authorization',__import__('sys').executable)
+            self.assertEqual(resumed.import_held(self.store.path,old,'explicit retry',__import__('sys').executable),m)
+            resumed.drive(m);self.assertEqual(target.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0],'COMPLETED')
+            self.assertEqual(e.fingerprint(origin),before);self.assertEqual(self.state(old),'WAITING_APPROVAL')
+            self.assertEqual(target.c.execute('SELECT COUNT(*) FROM missions').fetchone()[0],1)
+        finally:target.c.close()
+
     def test_recorded_api429_recovery(self):
         e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0]
         error='; events: '+json.dumps({'is_error':True,'api_error_status':429})
