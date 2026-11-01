@@ -36,7 +36,7 @@ class RunnerTests(unittest.TestCase):
     def test_crash_recovery(self):
         e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0];self.store.c.execute("INSERT INTO attempts(task,provider,state) VALUES(?,'claude','RUNNING')",(task,));e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
     def test_restart_without_duplication(self):
-        fake=Fake(response(),response());e,m=self.setup_engine(fake);self.assertTrue(e.step(m));r.Engine(self.store,fake,lambda *a:subprocess.CompletedProcess([],0,'','')).drive(m);self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'COMPLETED')
+        fake=Fake(response(),response());e,m=self.setup_engine(fake);self.assertTrue(e.step(m));self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite');r.Engine(self.store,fake,lambda *a:subprocess.CompletedProcess([],0,'','')).drive(m);self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'COMPLETED')
     def test_dirty_worktree_hold(self):
         fake=Fake();e,m=self.setup_engine(fake);work=Path(self.store.c.execute('SELECT worktree FROM missions').fetchone()[0]);(work/'dirty').write_text('x');e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL');self.assertFalse(fake.calls)
     def test_failed_validation_bounded(self):

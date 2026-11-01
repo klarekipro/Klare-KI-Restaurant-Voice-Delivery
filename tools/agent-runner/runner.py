@@ -135,7 +135,7 @@ class CLIProvider:
                 except ValueError: pass
             args=['claude','-p','--output-format','json','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
         else:
-            args=['codex','exec','--ignore-user-config','--ignore-rules','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
+            args=['codex','exec','--ignore-user-config','--ignore-rules','--disable','apps','--disable','browser_use','--disable','computer_use','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
         if provider=='claude': args=['sandbox-exec','-p',profile(worktree,scratch),*args]
         else:
             codex_probe(worktree,scratch,env)
@@ -194,6 +194,10 @@ class Engine:
         m=uuid.uuid4().hex[:12];work=self.s.path.parent/'worktrees'/m;work.parent.mkdir(exist_ok=True)
         git(repo,'worktree','add','-b','runner/'+m,str(work),d['source'])
         self.c.execute('INSERT INTO missions(id,state,definition,worktree,started) VALUES(?,\'QUEUED\',?,?,?)',(m,json.dumps(d),str(work),time.time()))
+        for unsafe in ('.mcp.json','.claude/settings.json','.claude/settings.local.json','.codex/config.toml'):
+            if (work/unsafe).exists():
+                self.s.hold(m,'project execution configuration requires review: '+unsafe)
+                return m
         self.task(m,d.get('provider','claude'),'implement',d['prompt']);self.s.event(m,'created',d['name'])
         return m
     def recover(self,m):
@@ -314,7 +318,7 @@ def main():
             print(final)
             if final!='COMPLETED': sys.exit(2 if final=='WAITING_APPROVAL' else 1)
         else:
-            row=s.c.execute('SELECT * FROM missions ORDER BY started DESC LIMIT 1').fetchone()
+            row=s.c.execute('SELECT * FROM missions WHERE id=?',(args.mission,)).fetchone() if args.mission else s.c.execute('SELECT * FROM missions ORDER BY started DESC LIMIT 1').fetchone()
             if not row: print('no missions');return
             m=row['id']
             if args.command=='pause': s.c.execute('UPDATE missions SET paused=1 WHERE id=?',(m,));s.event(m,'pause','takes effect before next invocation; active invocation remains bounded')
