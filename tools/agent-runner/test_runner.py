@@ -67,6 +67,55 @@ class RunnerTests(unittest.TestCase):
         fake=LimitedEdit(response(limited=True),response());e,m=self.setup_engine(fake,allow_edits=True);e.drive(m)
         self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'WAITING_APPROVAL')
         self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],2)
+    def limited_edit(self,provider='claude',validation=True):
+        class LimitedEdit(Fake):
+            def execute(self,p,*args):
+                if not self.calls:
+                    path=Path(args[0])/'app';path.mkdir();(path/'partial.py').write_text('value = 1\n')
+                return super().execute(p,*args)
+        fake=LimitedEdit(response(limited=True),response(),response())
+        e,m=self.setup_engine(fake,validation,provider=provider,allow_edits=True,review_fallback=True)
+        return e,m,fake
+    def test_failed_checkpoint_no_commit_or_handoff(self):
+        e,m,fake=self.limited_edit(validation=False);e.drive(m)
+        self.assertEqual(self.state(m),'WAITING_APPROVAL');self.assertEqual(len(fake.calls),1)
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM commits').fetchone()[0],0)
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],0)
+        self.assertEqual(self.store.c.execute('SELECT phase FROM checkpoints').fetchone()[0],'PRESERVED')
+    def test_reverse_validated_checkpoint(self):
+        e,m,fake=self.limited_edit('codex');e.drive(m)
+        self.assertEqual(fake.calls,['codex','claude','claude']);self.assertEqual(self.state(m),'COMPLETED')
+    def test_restart_at_each_checkpoint_boundary(self):
+        for phase in ['PRESERVED','VALIDATED','GIT_COMMITTED','COMMITTED','HANDED_OFF']:
+            with self.subTest(phase=phase):
+                self.store.c.execute('DELETE FROM availability')
+                e,m,fake=self.limited_edit()
+                def crash(at):
+                    if at==phase: raise SystemExit('synthetic process death')
+                e.checkpoint_hook=crash
+                with self.assertRaises(SystemExit): e.step(m)
+                self.store.c.close();self.store=r.Store(self.root/'state/state.sqlite')
+                resumed=r.Engine(self.store,fake,lambda *a:subprocess.CompletedProcess([],0,'checked',''))
+                resumed.drive(m);self.assertEqual(self.state(m),'COMPLETED')
+                self.assertEqual(fake.calls,['claude','codex','codex'])
+                work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0])
+                self.assertEqual((work/'app/partial.py').read_text(),'value = 1\n')
+                self.assertEqual(len(r.git(work,'log','--format=%s','--grep=Runner validated checkpoint').splitlines()),1)
+    def test_changed_preserved_checkpoint_holds(self):
+        e,m,fake=self.limited_edit()
+        def crash(phase): raise SystemExit('crash')
+        e.checkpoint_hook=crash
+        with self.assertRaises(SystemExit):e.step(m)
+        work=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(m,)).fetchone()[0]);(work/'app/partial.py').write_text('unexpected change')
+        r.Engine(self.store,fake).drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL');self.assertEqual(len(fake.calls),1)
+    def test_validation_mutating_checkpoint_holds(self):
+        e,m,fake=self.limited_edit()
+        def mutate(name,work):
+            (work/'app/partial.py').write_text('changed during checks')
+            return subprocess.CompletedProcess([],0,'','')
+        e.validator=mutate;e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+        self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],0)
+
     def test_recorded_api429_recovery(self):
         e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0]
         error='; events: '+json.dumps({'is_error':True,'api_error_status':429})

@@ -23,10 +23,10 @@ EDGES = {
  'RUNNING': {'VALIDATING','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED'},
  'VALIDATING': {'QUEUED','RETRYABLE_FAILURE','COMPLETED','WAITING_APPROVAL','FAILED','CANCELLED'},
  'RETRYABLE_FAILURE': {'RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
- 'PROVIDER_LIMITED': {'RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
+ 'PROVIDER_LIMITED': {'VALIDATING','RUNNING','WAITING_APPROVAL','FAILED','CANCELLED'},
  'WAITING_APPROVAL': {'QUEUED','CANCELLED'}, 'FAILED': set(), 'COMPLETED': set(), 'CANCELLED': set()
 }
-CHECKS = {'compile': ['{python}','-m','compileall','-q','app'], 'pytest':['{python}','-m','pytest','-q'], 'acceptance':['{python}','scripts/local_acceptance.py']}
+CHECKS = {'simulator': ['node',str(Path(__file__).with_name('check_simulator.cjs').resolve()),'app/templates/call_simulator.html'], 'compile': ['{python}','-m','compileall','-q','app'], 'pytest':['{python}','-m','pytest','-q'], 'acceptance':['{python}','scripts/local_acceptance.py']}
 DDL = '''
 CREATE TABLE IF NOT EXISTS missions(id TEXT PRIMARY KEY,state TEXT,definition TEXT,worktree TEXT,started REAL,paused INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,mission TEXT,provider TEXT,state TEXT,kind TEXT,prompt TEXT,retries INTEGER DEFAULT 0);
@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,mission TEXT,at REAL,ev
 CREATE TABLE IF NOT EXISTS tests(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER,name TEXT,passed INTEGER,exit_code INTEGER,output TEXT);
 CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY,mission TEXT,from_attempt INTEGER,to_task INTEGER,payload TEXT);
 CREATE TABLE IF NOT EXISTS approvals(id INTEGER PRIMARY KEY,mission TEXT,reason TEXT,approved INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS checkpoints(id INTEGER PRIMARY KEY,mission TEXT,attempt INTEGER UNIQUE,task INTEGER,phase TEXT,base_sha TEXT,digest TEXT,snapshot TEXT,commit_sha TEXT,classification TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS one_handoff_per_attempt ON handoffs(from_attempt);
 CREATE TABLE IF NOT EXISTS commits(id INTEGER PRIMARY KEY,mission TEXT,sha TEXT,attempt INTEGER);
 '''
 
@@ -205,7 +207,7 @@ class Engine:
         return self.c.execute('INSERT INTO tasks(mission,provider,state,kind,prompt,retries) VALUES(?,?,\'QUEUED\',?,?,?)',(m,p,kind,prompt,retries)).lastrowid
     def start(self,definition,repo):
         d=json.loads(Path(definition).read_text())
-        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits'}
+        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback'}
         if set(d)-allowed: raise Hold('unknown mission options')
         if not all(x in CHECKS for x in d.get('checks',[])): raise Hold('validation command outside allowlist')
         if d.get('max_concurrent',1)!=1: raise Hold('single-writer implementation supports max_concurrent=1 only')
@@ -221,7 +223,128 @@ class Engine:
                 return m
         self.task(m,d.get('provider','claude'),'implement',d['prompt']);self.s.event(m,'created',d['name'])
         return m
+    def checkpoint_files(self,work,d):
+        changed=sorted(set(git(work,'diff','--name-only','HEAD').splitlines()+git(work,'ls-files','--others','--exclude-standard').splitlines()))
+        if changed and not d.get('allow_edits'): raise Hold('checkpoint edits not authorized')
+        import re
+        for name in changed:
+            path=work/name
+            if Path(name).parts[0]!='app' or not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(work.resolve()):
+                raise Hold('uncertain/out-of-scope checkpoint file: '+name)
+            if any(part.is_symlink() for part in [path,*path.parents] if part!=work.parent):
+                raise Hold('symlink in checkpoint path')
+            text=path.read_text(errors='replace')
+            if re.search(r'-----BEGIN .*PRIVATE KEY|(?:ghp_|sk-live-|sk-proj-)[A-Za-z0-9_-]{16,}',text): raise Hold('possible credential in checkpoint')
+        return changed
+
+    def fingerprint(self,work):
+        names=set(git(work,'ls-files').splitlines()+git(work,'ls-files','--others','--exclude-standard').splitlines())
+        manifest={}
+        for name in sorted(names):
+            path=work/name
+            if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(work.resolve()): raise Hold('uncertain tracked file: '+name)
+            manifest[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+        return hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()
+
+    def checkpoint(self,m,a,t,work,d):
+        existing=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
+        if not existing:
+            changed=self.checkpoint_files(work,d);digest=self.fingerprint(work)
+            snapshot=self.s.path.parent/'checkpoints'/str(a);snapshot.mkdir(parents=True,exist_ok=True,mode=0o700)
+            for name in changed:
+                target=snapshot/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((work/name).read_bytes())
+            (snapshot/'working.diff').write_text(git(work,'diff','--binary','HEAD'))
+            self.c.execute("INSERT INTO checkpoints(mission,attempt,task,phase,base_sha,digest,snapshot,classification) VALUES(?,?,?,'PRESERVED',?,?,?,'incomplete-unverified')",(m,a,t['id'],git(work,'rev-parse','HEAD'),digest,str(snapshot)))
+            self.s.event(m,'checkpoint_preserved',digest)
+            self.checkpoint_hook('PRESERVED')
+        return self.continue_checkpoint(m,a,work,d)
+
+    def checkpoint_hook(self,phase):
+        # Fault injection is an in-process test seam, never a mission-defined command.
+        pass
+
+    def continue_checkpoint(self,m,a,work,d):
+        cp=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
+        if cp['phase']=='HANDED_OFF': return True
+        if self.fingerprint(work)!=cp['digest']: raise Hold('checkpoint contents changed since preservation/validation')
+        task=self.c.execute('SELECT * FROM tasks WHERE id=?',(cp['task'],)).fetchone()
+        other='codex' if task['provider']=='claude' else 'claude'
+        available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
+        if not d.get('fallback') or (available and not available[0]): raise Hold('checkpoint preserved; no permitted available continuation provider')
+        if cp['phase']=='PRESERVED':
+            if git(work,'rev-parse','HEAD')!=cp['base_sha']: raise Hold('checkpoint base changed before validation')
+            self.s.state(m,'VALIDATING')
+            if not self.validate(m,a,work,d): raise Hold('incomplete checkpoint failed external checks; no commit or handoff')
+            if self.fingerprint(work)!=cp['digest']: raise Hold('external checks changed checkpoint contents')
+            self.c.execute("UPDATE checkpoints SET phase='VALIDATED',classification='incomplete-checks-passed' WHERE id=?",(cp['id'],));self.checkpoint_hook('VALIDATED')
+        cp=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
+        if cp['phase']=='VALIDATED':
+            head=git(work,'rev-parse','HEAD');changed=self.checkpoint_files(work,d)
+            if head!=cp['base_sha']:
+                if git(work,'log','-1','--format=%s')!=f'Runner validated checkpoint {cp["id"]}' or git(work,'rev-parse','HEAD^')!=cp['base_sha'] or changed:
+                    raise Hold('unrecognized Git commit during checkpoint recovery')
+            elif changed:
+                git(work,'add','--',*changed)
+                git(work,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Local Agent Runner','-c','user.email=runner@example.invalid','commit','-m',f'Runner validated checkpoint {cp["id"]}')
+            head=git(work,'rev-parse','HEAD')
+            self.checkpoint_hook('GIT_COMMITTED')
+            self.c.execute("UPDATE checkpoints SET phase='COMMITTED',commit_sha=? WHERE id=?",(head,cp['id']))
+            self.c.execute('INSERT INTO commits(mission,sha,attempt) VALUES(?,?,?)',(m,head,a));self.checkpoint_hook('COMMITTED')
+        cp=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
+        if git(work,'rev-parse','HEAD')!=cp['commit_sha'] or git(work,'status','--porcelain'): raise Hold('checkpoint commit no longer matches clean worktree')
+        self.c.execute('BEGIN IMMEDIATE')
+        try:
+            payload={'checkpoint':cp['id'],'commit':cp['commit_sha'],'classification':'incomplete-checks-passed','retry_at':None}
+            next_task=self.task(m,other,task['kind'],task['prompt']+'\nContinue validated but INCOMPLETE checkpoint '+json.dumps(payload)+'. Inspect the saved changes; finish remaining work and report only task-scoped results.',task['retries'])
+            self.c.execute("UPDATE tasks SET state='PROVIDER_LIMITED' WHERE id=?",(task['id'],))
+            self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,next_task,json.dumps(payload)))
+            self.c.execute("UPDATE checkpoints SET phase='HANDED_OFF' WHERE id=?",(cp['id'],));self.s.state(m,'QUEUED')
+            self.c.execute('COMMIT')
+        except BaseException: self.c.execute('ROLLBACK');raise
+        self.checkpoint_hook('HANDED_OFF');return True
+
+    def import_held(self,source_db,source_mission,note,python):
+        if not note: raise Hold('explicit recovery authorization note required; existing holds are not auto-approved')
+        original=sqlite3.connect('file:'+str(Path(source_db).resolve())+'?mode=ro',uri=True);original.row_factory=sqlite3.Row
+        try:
+            old=original.execute('SELECT * FROM missions WHERE id=?',(source_mission,)).fetchone()
+            if not old or old['state']!='WAITING_APPROVAL': raise Hold('source is not a held mission')
+            previous=original.execute('SELECT a.*,t.prompt,t.kind FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=? ORDER BY a.id DESC LIMIT 1',(source_mission,)).fetchone()
+            try: envelope=json.loads(previous['error'].split('; events: ',1)[1])
+            except (ValueError,IndexError,TypeError): raise Hold('no recoverable machine limit evidence')
+            if previous['provider']!='claude' or envelope.get('is_error') is not True or envelope.get('api_error_status')!=429: raise Hold('source limit evidence not confirmed API429')
+            if previous['pid']:
+                try: os.kill(previous['pid'],0)
+                except ProcessLookupError: pass
+                else: raise Hold('source CLI PID still exists; ownership uncertain')
+            origin=Path(old['worktree']);definition=json.loads(old['definition']);changed=self.checkpoint_files(origin,definition);digest=self.fingerprint(origin)
+            m=uuid.uuid4().hex[:12];archive=self.s.path.parent/'imports'/m;archive.mkdir(parents=True,mode=0o700)
+            backup=sqlite3.connect(archive/'source.sqlite');original.backup(backup);backup.close()
+            for name in changed:
+                target=archive/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((origin/name).read_bytes())
+            head=git(origin,'rev-parse','HEAD');(archive/'working.diff').write_text(git(origin,'diff','--binary','HEAD'))
+            definition.update(source=head,python=str(Path(python).absolute()),review_fallback=True,checks=['pytest','acceptance','simulator'],max_seconds=600,max_invocations=4)
+            work=self.s.path.parent/'worktrees'/m;work.parent.mkdir(exist_ok=True)
+            git(origin,'worktree','add','-b','runner/'+m,str(work),head)
+            for name in changed:
+                target=work/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((archive/name).read_bytes())
+            if self.fingerprint(origin)!=digest or self.fingerprint(work)!=digest: raise Hold('source changed during recovery copy; original preserved')
+            self.c.execute("INSERT INTO missions(id,state,definition,worktree,started) VALUES(?,'PROVIDER_LIMITED',?,?,?)",(m,json.dumps(definition),str(work),time.time()))
+            task=self.task(m,previous['provider'],previous['kind'],previous['prompt'])
+            a=self.c.execute("INSERT INTO attempts(task,provider,state,started,exit_code,result,usage,error) VALUES(?,?,'PROVIDER_LIMITED',?,?,?,?,?)",(task,previous['provider'],time.time(),previous['exit_code'],previous['result'],previous['usage'],previous['error'])).lastrowid
+            self.c.execute("INSERT OR REPLACE INTO availability VALUES('claude',0,'imported real API429; retry timestamp unverified',NULL)")
+            self.c.execute('INSERT INTO approvals(mission,reason,approved) VALUES(?,?,1)',(m,note))
+            self.s.event(m,'recovery_import',json.dumps({'source_mission':source_mission,'source_attempt':previous['id'],'digest':digest,'authorization':note,'original_untouched':True}))
+            try: self.checkpoint(m,a,self.c.execute('SELECT * FROM tasks WHERE id=?',(task,)).fetchone(),work,definition)
+            except Exception as exc: self.s.hold(m,'imported checkpoint not validated: '+str(exc))
+            return m
+        finally: original.close()
+
     def recover(self,m):
+        for cp in self.c.execute("SELECT attempt FROM checkpoints WHERE mission=? AND phase!='HANDED_OFF'",(m,)).fetchall():
+            row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
+            try: self.continue_checkpoint(m,cp['attempt'],Path(row['worktree']),json.loads(row['definition']))
+            except Hold as exc: self.s.hold(m,str(exc));return False
         # Unknown child state is never automatically re-executed. Operator must inspect preserved worktree.
         running=self.c.execute("SELECT id FROM attempts WHERE task IN (SELECT id FROM tasks WHERE mission=?) AND state='RUNNING'",(m,)).fetchall()
         if running:
@@ -243,6 +366,7 @@ class Engine:
                     if remaining<=0: raise Hold('mission duration exhausted')
                     runtime=python.parent.parent
                     sandbox=profile(work,tmp,False)+'(allow file-read* (subpath '+json.dumps(str(runtime))+'))'
+                    if name=='simulator': sandbox+='(allow file-read* (literal '+json.dumps(CHECKS[name][1])+'))'
                     env={k:os.environ[k] for k in ('PATH','LANG') if k in os.environ}
                     env.update(HOME=tmp,TMPDIR=tmp,PYTHONNOUSERSITE='1')
                     r=run(['sandbox-exec','-p',sandbox,*args],work,env=env,timeout=min(120,remaining))
@@ -285,21 +409,9 @@ class Engine:
         self.c.execute('UPDATE attempts SET duration=?,exit_code=?,result=?,usage=?,error=? WHERE id=?',(r['duration'],r['exit_code'],json.dumps(r['result']),json.dumps(r['usage']),r['error'],a))
         if r.get('limited'):
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed provider limit; retry time unknown',NULL)",(t['provider'],));self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a,));self.s.state(m,'PROVIDER_LIMITED')
-            other='codex' if t['provider']=='claude' else 'claude'
-            available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
-            if d.get('fallback',False) and (not available or available[0]):
-                if git(work,'status','--porcelain'):
-                    changed=git(work,'diff','--name-only').splitlines()+git(work,'ls-files','--others','--exclude-standard').splitlines()
-                    import re
-                    safe=d.get('allow_edits',False) and all(Path(x).parts[0]=='app' and not (work/x).is_symlink() and (work/x).resolve().is_relative_to(work.resolve()) for x in changed)
-                    safe=safe and all(not re.search(r'-----BEGIN .*PRIVATE KEY|(?:ghp_|sk-live-|sk-proj-)[A-Za-z0-9_-]{16,}',(work/x).read_text(errors='replace')) for x in changed if (work/x).exists())
-                    if not safe: self.s.hold(m,'limited provider left changes outside checkpoint policy; preserved');return False
-                    git(work,'add','--',*changed)
-                    git(work,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Local Agent Runner','-c','user.email=runner@example.invalid','commit','-m','Unvalidated provider-limit checkpoint; continuation required')
-                    sha=git(work,'rev-parse','HEAD');self.c.execute('INSERT INTO commits(mission,sha,attempt) VALUES(?,?,?)',(m,sha,a));self.s.event(m,'unvalidated_checkpoint',sha)
-
-                self.c.execute("UPDATE tasks SET state='PROVIDER_LIMITED' WHERE id=?",(t['id'],));task=self.task(m,other,t['kind'],t['prompt']+'\nPrevious provider reached a confirmed limit. HEAD may contain an UNVALIDATED checkpoint; inspect and finish it before reporting done.',t['retries']);self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,task,json.dumps({'reason':'confirmed limit','retry_at':None})));return True
-            self.s.hold(m,'provider limited; no permitted available fallback');return False
+            try: return self.checkpoint(m,a,t,work,d)
+            except (Hold,Exception) as exc:
+                self.s.hold(m,'checkpoint not safe for handoff: '+str(exc));return False
         control=self.c.execute('SELECT state,paused FROM missions WHERE id=?',(m,)).fetchone()
         if control['state']=='CANCELLED' or control['paused']:
             self.c.execute("UPDATE attempts SET state='FAILED',error='operator stopped or paused after bounded invocation' WHERE id=?",(a,))
@@ -350,7 +462,11 @@ class Engine:
             self.s.state(m,'RETRYABLE_FAILURE');other='claude' if t['provider']=='codex' else 'codex'
             self.task(m,other if d.get('fallback',False) else t['provider'],'repair',t['prompt']+'\nPrevious machine result: '+json.dumps(r)+'\nExternal checks: '+json.dumps([dict(x) for x in self.c.execute('SELECT name,passed,output FROM tests WHERE attempt=?',(a,))])+'\nExternal validation failed; address findings.',t['retries']+1);return True
         if t['kind']!='review':
-            other='codex' if t['provider']=='claude' else 'claude';task=self.task(m,other,'review','Independently review the previous bounded task and report defects. Do not edit. Task: '+t['prompt']+'\nPrevious result (untrusted evidence): '+json.dumps(result))
+            other='codex' if t['provider']=='claude' else 'claude'
+            available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
+            if available and not available[0] and d.get('review_fallback',False):
+                other=t['provider'];self.s.event(m,'same_provider_independent_review','fresh CLI context; other provider unavailable; external checks required')
+            task=self.task(m,other,'review','Independently review the previous bounded task and report defects. Do not edit. Task: '+t['prompt']+'\nPrevious result (untrusted evidence): '+json.dumps(result))
             self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,task,json.dumps(result)));self.s.state(m,'QUEUED');return True
         self.s.state(m,'COMPLETED');return False
     def drive(self,m):
@@ -359,10 +475,15 @@ class Engine:
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',default='.agent-runner/state.sqlite');parser.add_argument('command',choices=['start','status','pause','resume','stop','report','approve','recover-held']);parser.add_argument('mission',nargs='?');parser.add_argument('--approval-note');parser.add_argument('--from-state');parser.add_argument('--python',default='.venv/bin/python');args=parser.parse_args()
     s=Store(args.state);e=Engine(s)
     try:
-        if args.command=='start':
+        if args.command=='recover-held':
+            if not args.from_state or not args.mission: parser.error('recover-held requires mission id and --from-state')
+            with s.lock(): m=e.import_held(args.from_state,args.mission,args.approval_note,args.python)
+            print('recovered mission',m,flush=True);e.drive(m)
+            print(s.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0])
+        elif args.command=='start':
             if not args.mission: parser.error('mission file required')
             with s.lock(): m=e.start(args.mission,Path.cwd())
             print('mission',m,flush=True);e.drive(m)
