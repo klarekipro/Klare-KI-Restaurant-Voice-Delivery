@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:/Users/admin/.codex/packages/app-server-daemon/releases/0.166.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0-macos/codex-arg07EAu4c:/Users/admin/.codex/tmp/arg0-macos/codex-arg0CiDK4S:/Users/admin/.codex/packages/app-server-daemon/releases/0.165.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0-macos/codex-arg0PktSXQ:/Users/admin/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0-macos/codex-arg0IKcVLJ:/Users/admin/.codex/packages/app-server-daemon/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg07KzPh2:/Users/admin/.codex/packages/app-server-daemon/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0dz8qMo:/Users/admin/.nvm/versions/node/v24.15.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/admin/.nvm/versions/node/v24.15.0/bin:/Users/admin/.antigravity/antigravity/bin:/Users/admin/.local/bin:/opt/homebrew/sbin</string>
+	</dict>
+	<key>ExitTimeOut</key>
+	<integer>15</integer>
+	<key>Label</key>
+	<string>com.klareki.agent-runner</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/opt/python@3.14/bin/python3.14</string>
+		<string>/Users/admin/Projects/restaurant-quota-resume/tools/agent-runner/runner.py</string>
+		<string>--state</string>
+		<string>/Users/admin/Projects/restaurant-quota-resume/.agent-runner/state.sqlite</string>
+		<string>scheduler</string>
+		<string>tick</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/admin/Projects/restaurant-quota-resume/.agent-runner/logs/scheduler.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/admin/Projects/restaurant-quota-resume/.agent-runner/logs/scheduler.out.log</string>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>ThrottleInterval</key>
+	<integer>300</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/admin/Projects/restaurant-quota-resume</string>
+</dict>
+</plist>

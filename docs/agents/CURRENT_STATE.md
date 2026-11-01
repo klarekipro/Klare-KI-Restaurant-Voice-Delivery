@@ -1,11 +1,13 @@
-# Current state — Mission 05
+# Current state — Mission 06
 
-Branch: feat/autonomous-takeover-hardening. Worktree: /Users/admin/Projects/restaurant-takeover-hardening. Base: PR4 commit 96ee67214f7e92cd212705e8942d42accb665d04. Resolve final handoff SHA with git rev-parse HEAD and compare remote before work. No automatic merge or deployment approval.
+Branch: feat/automatic-quota-resume. Worktree: /Users/admin/Projects/restaurant-quota-resume. Base PR5: 8471c4d5215b80cb260a546d339291afe727630e. Resolve final SHA with git rev-parse HEAD and verify remote/status before work. No merge/deployment approval.
 
-Read tools/agent-runner/README.md and outputs/codex/mission-05/VALIDATION.md. SQLite state and private snapshots remain ignored in .agent-runner/. Original mission 92bd71a914ab is still held and its template hash is unchanged. Do not clean its worktree or the intermediate recovery worktrees.
+Read tools/agent-runner/README.md and outputs/codex/mission-06/VALIDATION.md. WAITING_QUOTA is distinct from WAITING_APPROVAL. New missions must opt into auto_resume_quota and separately authorize any billable availability probe. Original deadlines and invocation/failure controls include waiting and probes.
 
-Real recovery 2423183b75aa was independently rejected for a retry payload defect. Authorized follow-up 46ae6de714e3 COMPLETED using two real Codex processes, external checks and no manual result forwarding. Claude API429 is historical real evidence; reverse direction is simulated test coverage. Final repaired template is integrated byte-for-byte from verified commit 1587f11; full hashes and machine results are in live-recovery.json.
+Successful demo b6b9f5999698 is COMPLETED in .agent-runner/demo-verified/state.sqlite: controlled synthetic quota/reset/time, then three real Codex CLI requests (probe/work/fresh review), external validation, separate worker restart and no duplicated calls. Earlier scope-conflicting demo remains WAITING_APPROVAL in .agent-runner/demo/state.sqlite. Do not clear it automatically. No live quota reset or new Claude call was observed.
 
-Commands: python3 -m unittest discover -s tools/agent-runner -p 'test_*.py' -q; reviewed-project .venv/bin/python -m pytest -q; .venv/bin/python scripts/local_acceptance.py; node tools/agent-runner/check_simulator.cjs app/templates/call_simulator.html. Expected: 36 runner tests, 22 app tests, HTTP/JS checks pass. One existing Starlette/httpx deprecation warning remains. No browser/mobile verification.
+LaunchAgent generated in outputs/codex/mission-06/launchagent.plist and private .agent-runner/launchagent.plist; plutil lint passed. Actual status: NOT installed and NOT loaded. Do not install or enable it without separate user authorization. Logs/state locations and explicit install/enable/disable/uninstall commands are in README.
 
-Next agent: review PR security and recovery transaction boundaries independently. Reproduce tests and CLI evidence. Existing complete missions must not execute again on resume. Failed review missions and historical approval holds must remain terminal/held; use explicitly authorized idempotent import/follow-up commands for bounded work. Keep local-only credentials and synthetic data restrictions.
+Checks: 63 runner tests; 22 application tests; HTTP acceptance/restart and pip check passed. Existing Starlette/httpx warning remains. Physical sleep/login launchd behavior and browser/mobile acceptance are unverified. DBs, provider auth, snapshots and logs are intentionally ignored; no application source was changed.
+
+Next: independent scheduler security/recovery review, then obtain separate user approval if persistent activation is desired. Reproduce the controlled demo with a new private store; do not reset an old mission budget or claim simulated recovery as a live provider reset. Preserve all historical worktrees/holds.

@@ -30,9 +30,9 @@ class RunnerTests(unittest.TestCase):
     def test_codex_failure_claude_repair(self):
         fake=Fake(response(exit_code=1),response(),response());e,m=self.setup_engine(fake,provider='codex');e.drive(m);self.assertEqual(fake.calls,['codex','claude','codex']);self.assertEqual(self.state(m),'COMPLETED')
     def test_claude_limit_takeover(self):
-        fake=Fake(response(limited=True),response(),response());e,m=self.setup_engine(fake);e.drive(m);self.assertEqual(fake.calls[:2],['claude','codex']);self.assertEqual(self.state(m),'WAITING_APPROVAL') # unavailable Claude cannot review
+        fake=Fake(response(limited=True),response(),response());e,m=self.setup_engine(fake);e.drive(m);self.assertEqual(fake.calls[:2],['claude','codex']);self.assertEqual(self.state(m),'WAITING_QUOTA') # unavailable Claude cannot review
     def test_codex_limit_safe_hold(self):
-        e,m=self.setup_engine(Fake(response(limited=True)),provider='codex',fallback=False);e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+        e,m=self.setup_engine(Fake(response(limited=True)),provider='codex',fallback=False);e.drive(m);self.assertEqual(self.state(m),'WAITING_QUOTA')
     def test_crash_recovery(self):
         e,m=self.setup_engine(Fake());task=self.store.c.execute('SELECT id FROM tasks').fetchone()[0];self.store.c.execute("INSERT INTO attempts(task,provider,state) VALUES(?,'claude','RUNNING')",(task,));e.drive(m);self.assertEqual(self.state(m),'WAITING_APPROVAL')
     def test_restart_without_duplication(self):
@@ -65,7 +65,7 @@ class RunnerTests(unittest.TestCase):
                     path=Path(args[0])/'app';path.mkdir();(path/'partial.py').write_text('value = 1\n')
                 return super().execute(provider,*args)
         fake=LimitedEdit(response(limited=True),response());e,m=self.setup_engine(fake,allow_edits=True);e.drive(m)
-        self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'WAITING_APPROVAL')
+        self.assertEqual(fake.calls,['claude','codex']);self.assertEqual(self.state(m),'WAITING_QUOTA')
         self.assertEqual(self.store.c.execute('SELECT COUNT(*) FROM handoffs').fetchone()[0],2)
     def limited_edit(self,provider='claude',validation=True):
         class LimitedEdit(Fake):
@@ -143,7 +143,7 @@ e.checkpoint_hook=crash;e.drive(sys.argv[3])
     def test_held_import_is_idempotent_and_preserves_source(self):
         e,old,fake=self.limited_edit()
         self.store.c.execute("INSERT INTO availability VALUES('codex',0,'test unavailable',NULL)")
-        e.drive(old);self.assertEqual(self.state(old),'WAITING_APPROVAL')
+        e.drive(old);self.assertEqual(self.state(old),'WAITING_QUOTA');self.store.hold(old,'explicit test approval boundary')
         self.store.c.execute('UPDATE attempts SET error=? WHERE task IN (SELECT id FROM tasks WHERE mission=?)',('; events: '+json.dumps({'is_error':True,'api_error_status':429}),old))
         origin=Path(self.store.c.execute('SELECT worktree FROM missions WHERE id=?',(old,)).fetchone()[0]);before=e.fingerprint(origin)
         target=r.Store(self.root/'recovery/state.sqlite')

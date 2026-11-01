@@ -16,3 +16,6 @@ Remaining: actual browser/mobile acceptance; complete preserved simulator repair
 
 Mission 05: preserved historical partial work; implemented validated checkpoint recovery, restart-safe atomic handoffs and typed delivery records. Real historical Claude429→live Codex continuation, independent review rejection and bounded follow-up completed. Integrated verified simulator retry payload/key repair.
 Remaining: real reverse-provider CLI demonstration when Claude capacity permits; browser/mobile acceptance; known form-rejection UX; further process/credential isolation review. Original held mission and failed intermediate recovery trees remain private and intact.
+
+Mission 06 complete: persistent WAITING_QUOTA, bounded availability checks, unattended one-shot resume, operator controls and validated launchd configuration. Controlled quota/time + three real Codex CLI requests completed without copying messages or repeating work. 63 runner and 22 restaurant tests pass.
+Pending: separately approved LaunchAgent activation and real login/sleep/wake verification; live provider-reset observation when naturally available; browser/mobile acceptance. Do not silently enroll old holds, reset budgets or activate persistence.

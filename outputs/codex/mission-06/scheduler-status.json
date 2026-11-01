@@ -1,0 +1,9 @@
+{
+  "installed": false,
+  "loaded": false,
+  "label": "com.klareki.agent-runner",
+  "state": "/Users/admin/Projects/restaurant-quota-resume/.agent-runner/state.sqlite",
+  "generated": "/Users/admin/Projects/restaurant-quota-resume/.agent-runner/launchagent.plist",
+  "logs": "/Users/admin/Projects/restaurant-quota-resume/.agent-runner/logs",
+  "waiting_missions": 0
+}
