@@ -1,0 +1,19 @@
+{
+  "mission": "92bd71a914ab",
+  "state": "WAITING_APPROVAL",
+  "provider": "claude",
+  "machine_api_status": 429,
+  "limit_type": "rate/quota limit; exact retry timestamp unverified",
+  "partial_change": ".agent-runner/worktrees/92bd71a914ab/app/templates/call_simulator.html",
+  "partial_sha256": "f8b73c12c939aaea3e547335b3ff6572474548fe871a2c35ad37923d142f587a",
+  "attempts": [
+    {
+      "provider": "claude",
+      "state": "PROVIDER_LIMITED",
+      "exit_code": 1,
+      "duration": 46.60407799994573,
+      "usage": "{\"usage\": {\"input_tokens\": 4, \"cache_creation_input_tokens\": 8304, \"cache_read_input_tokens\": 25436, \"output_tokens\": 4966, \"server_tool_use\": {\"web_search_requests\": 0, \"web_fetch_requests\": 0}, \"service_tier\": \"standard\", \"cache_creation\": {\"ephemeral_1h_input_tokens\": 8304, \"ephemeral_5m_input_tokens\": 0}, \"inference_geo\": \"\", \"iterations\": [{\"input_tokens\": 1, \"output_tokens\": 4836, \"cache_read_input_tokens\": 15752, \"cache_creation_input_tokens\": 2236, \"cache_creation\": {\"ephemeral_5m_input_tokens\": 0, \"ephemeral_1h_input_tokens\": 2236}, \"type\": \"message\"}], \"speed\": \"standard\"}, \"total_cost_usd\": 0.11393579999999999}"
+    }
+  ],
+  "note": "Partial edits preserved, not validated or published. Initial parser missed API429; fixed parser and checkpoint policy are unit-tested but not re-run against exhausted Claude quota."
+}

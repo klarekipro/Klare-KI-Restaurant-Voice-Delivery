@@ -1,0 +1,13 @@
+{
+  "name": "PR3 local-demo review",
+  "source": "7b13ba55f66c7214143dc00aadbca8435a0a1d05",
+  "prompt": "Review PR3 implementation and docs/agents/CURRENT_STATE.md. Read app templates and tests for local demonstration blockers. Perform browser/mobile acceptance only if a browser tool is actually available; otherwise explicitly report it unverified. Do not install dependencies or edit for this initial bounded review. Identify confirmed defects and follow-up work. Return done for completed review, not a claim of product readiness.",
+  "provider": "claude",
+  "fallback": true,
+  "checks": ["compile"],
+  "max_invocations": 3,
+  "max_retries": 0,
+  "max_failures": 2,
+  "max_seconds": 240,
+  "max_concurrent": 1
+}

@@ -15,3 +15,5 @@ data/*.db
 *.session-secret
 *.sqlite-wal
 *.sqlite-shm
+
+.agent-runner/
