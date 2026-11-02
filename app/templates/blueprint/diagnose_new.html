@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — Neue Diagnose{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card narrow">
+  <h1>Neue Diagnose starten</h1>
+  <p class="small muted">
+    Erfassen Sie zunächst die Stammdaten des befragten Restaurants.
+    Bitte speichern Sie keine personenbezogenen Daten Dritter in Freitextfeldern.
+    Angaben verbleiben lokal auf diesem Gerät.
+  </p>
+  <form method="post" action="/blueprint/diagnose/new">
+    <label>Restaurantname <span class="err">*</span>
+      <input name="restaurant_name" maxlength="120" required>
+    </label>
+    <label>Stadt
+      <input name="city" maxlength="80">
+    </label>
+    <label>Küchen-Stil (Freitext, z. B. Pizza, Türkisch, Vegan)
+      <input name="cuisine" maxlength="80">
+    </label>
+    <label>Standortanzahl
+      <input name="locations_count" type="number" min="1" max="999" value="1">
+    </label>
+    <label>Ansprechpartner (Vorname, Nachname)
+      <input name="contact_person" maxlength="120">
+    </label>
+    <label>Rolle des Ansprechpartners
+      <input name="contact_role" maxlength="60" placeholder="z. B. Inhaber, Einkauf">
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit">Profil anlegen</button>
+      <a class="secondary" href="/blueprint/diagnose">Abbrechen</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

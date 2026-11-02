@@ -118,6 +118,60 @@ CREATE TABLE IF NOT EXISTS access_log (
     reason     TEXT    NOT NULL DEFAULT '',
     occurred_at TEXT   NOT NULL DEFAULT (datetime('now'))
 );
+
+-- MISSION 12: Blueprint diagnostic/proposal tables (addition, no migration).
+CREATE TABLE IF NOT EXISTS diagnostic_profiles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_name TEXT    NOT NULL,
+    city            TEXT    NOT NULL DEFAULT '',
+    cuisine         TEXT    NOT NULL DEFAULT '',
+    locations_count INTEGER NOT NULL DEFAULT 1 CHECK(locations_count >= 1),
+    contact_person  TEXT    NOT NULL DEFAULT '',
+    contact_role    TEXT    NOT NULL DEFAULT '',
+    status          TEXT    NOT NULL DEFAULT 'draft'
+                     CHECK(status IN ('draft','review','shared')),
+    catalog_version TEXT    NOT NULL,
+    created_by      INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_profiles_created_by
+    ON diagnostic_profiles(created_by);
+
+CREATE TABLE IF NOT EXISTS diagnostic_findings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id    INTEGER NOT NULL REFERENCES diagnostic_profiles(id) ON DELETE CASCADE,
+    area_code     TEXT    NOT NULL,
+    status        TEXT    NOT NULL
+                   CHECK(status IN ('available','partial','manual','missing','unknown')),
+    current_tool  TEXT    NOT NULL DEFAULT '',
+    quality       INTEGER CHECK(quality IS NULL OR quality BETWEEN 1 AND 5),
+    automation    INTEGER CHECK(automation IS NULL OR automation BETWEEN 1 AND 5),
+    time_loss_min_per_day INTEGER
+                   CHECK(time_loss_min_per_day IS NULL OR time_loss_min_per_day >= 0),
+    verified      INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0,1)),
+    notes         TEXT    NOT NULL DEFAULT '',
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (profile_id, area_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_findings_profile
+    ON diagnostic_findings(profile_id);
+
+CREATE TABLE IF NOT EXISTS diagnostic_selections (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id        INTEGER NOT NULL REFERENCES diagnostic_profiles(id) ON DELETE CASCADE,
+    improvement_code  TEXT    NOT NULL,
+    selected          INTEGER NOT NULL DEFAULT 1 CHECK(selected IN (0,1)),
+    priority          TEXT    NOT NULL DEFAULT 'medium'
+                       CHECK(priority IN ('low','medium','high')),
+    notes             TEXT    NOT NULL DEFAULT '',
+    UNIQUE (profile_id, improvement_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_selections_profile
+    ON diagnostic_selections(profile_id);
 """
 
 

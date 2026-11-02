@@ -184,3 +184,23 @@ details > summary.link { cursor: pointer; }
 }
 /* Safe-area padding bottom für iOS */
 .card.narrow { padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); }
+
+/* Blueprint: Sub-Navigation */
+.bp-subnav { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.bp-tab { padding: 0.4rem 0.8rem; border-radius: 999px; background: #fff;
+          border: 1px solid var(--border); color: var(--fg); text-decoration: none;
+          font-size: 0.9rem; }
+.bp-tab:hover { text-decoration: none; background: #fafbfc; }
+.bp-tab--active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* Blueprint: Status-Badges für Diagnose-Bereiche */
+.status-badge--available        { background:#D1FAE5; color:#064E3B; }
+.status-badge--available::before{ content: "✓ "; }
+.status-badge--partial          { background:#FDE68A; color:#78350F; }
+.status-badge--partial::before  { content: "◐ "; }
+.status-badge--manual           { background:#FEF3C7; color:#78350F; }
+.status-badge--manual::before   { content: "⚙ "; }
+.status-badge--missing          { background:#FEE2E2; color:#7F1D1D; }
+.status-badge--missing::before  { content: "! "; }
+.status-badge--unknown          { background:#F3F4F6; color:#374151; }
+.status-badge--unknown::before  { content: "? "; }

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — Vorschlag für {{ profile.restaurant_name }}{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card">
+  <div class="row space">
+    <div>
+      <h1>Vorschlag für {{ profile.restaurant_name }}</h1>
+      <p class="muted small">
+        Basierend auf {{ answered }} von {{ total }} beantworteten Bereichen.
+        Katalog-Version <strong>{{ profile.catalog_version }}</strong>.
+        Keine der aufgeführten Integrationen ist derzeit technisch verifiziert.
+      </p>
+    </div>
+    <div>
+      <a class="primary" href="/blueprint/proposal/{{ profile.id }}/report">
+        Druckfähigen Bericht öffnen
+      </a>
+    </div>
+  </div>
+</section>
+
+{% if answered == 0 %}
+<section class="card">
+  <p>Es liegen noch keine Antworten vor.
+     <a href="/blueprint/diagnose/{{ profile.id }}">Beantworten Sie zunächst die Bereiche.</a></p>
+</section>
+{% else %}
+
+{% if result.to_clarify %}
+<section class="card">
+  <h2>Zunächst klären</h2>
+  <p class="small muted">
+    Diese Bereiche sind nicht als Lücken gewertet — sie werden im nächsten Gespräch gemeinsam geprüft.
+  </p>
+  <ul class="shelf">
+    {% for code in result.to_clarify %}
+      {% set area = areas | selectattr("code", "equalto", code) | first %}
+      <li>{{ area.title if area else code }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<form method="post" action="/blueprint/proposal/{{ profile.id }}/select">
+<section class="card">
+  <h2>Empfohlene Verbesserungen</h2>
+  <p class="small muted">
+    Wählen Sie die Verbesserungen aus, die der Betrieb mit Ihnen besprechen möchte.
+    Die Priorität ist ein Vorschlag auf Basis der Status-Antworten, keine Dringlichkeits­bewertung.
+  </p>
+
+  {% if not result.suggestions %}
+  <p>Für die beantworteten Bereiche sind aktuell keine Verbesserungen aus dem Katalog zugeordnet.</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Auswahl</th>
+        <th>Verbesserung</th>
+        <th>Priorität</th>
+        <th>Richtwert (unverbindlich)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in result.suggestions %}
+      <tr>
+        <td>
+          <input type="checkbox" name="selected" value="{{ s.improvement.code }}"
+                 {% if s.improvement.code in selected_codes %}checked{% endif %}>
+        </td>
+        <td>
+          <strong>{{ s.improvement.title }}</strong><br>
+          <span class="small muted">Für Bereiche:
+            {% for ac in s.driver_areas %}
+              {% set area = areas | selectattr("code","equalto",ac) | first %}
+              {{ area.short if area else ac }}{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </span>
+        </td>
+        <td>
+          <select name="priority_{{ s.improvement.code }}">
+            {% set current = priority_overrides.get(s.improvement.code, s.priority) %}
+            <option value="high"   {% if current == 'high'   %}selected{% endif %}>Hohe Priorität</option>
+            <option value="medium" {% if current == 'medium' %}selected{% endif %}>Mittlere Priorität</option>
+            <option value="low"    {% if current == 'low'    %}selected{% endif %}>Niedrige Priorität</option>
+          </select>
+        </td>
+        <td class="num">
+          {{ s.improvement.budget_eur_from }} – {{ s.improvement.budget_eur_to }} €
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="actions"><button class="primary" type="submit">Auswahl speichern</button></div>
+  {% endif %}
+</section>
+</form>
+
+{% if result.verify_recommended %}
+<section class="card">
+  <h2>Verifikation empfohlen</h2>
+  <p class="small muted">
+    Diese Bereiche wurden als „bereits vorhanden" markiert, aber noch nicht
+    technisch mit dem Betrieb verifiziert.
+  </p>
+  <ul class="shelf">
+    {% for code in result.verify_recommended %}
+      {% set area = areas | selectattr("code","equalto",code) | first %}
+      <li>{{ area.title if area else code }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% endif %}
+{% endblock %}

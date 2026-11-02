@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — Übersicht{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card">
+  <h1>Klare KI · Restaurant Blueprint</h1>
+  <p class="muted">
+    Diese Oberfläche dient der Diskussionsgrundlage mit Restaurantbetreibern. Sie
+    ersetzt keine bestehende Restaurantsoftware. Alle Richtwerte sind unverbindlich
+    und müssen vor einer verbindlichen Aussage technisch geprüft werden.
+  </p>
+
+  <div class="grid-2" style="margin-top:1rem">
+    <div class="card">
+      <h2>1 · Demo</h2>
+      <p>Zeigen Sie dem Betrieb ein Referenz-Restaurant mit vernetzten Modulen
+         (Anruf → Konfirmierer → Küche → Fahrer → Dashboard).</p>
+      <p class="actions"><a class="primary" href="/blueprint/demo">Demo öffnen</a></p>
+    </div>
+    <div class="card">
+      <h2>2 · Diagnose</h2>
+      <p>Erfassen Sie 12 Bereiche mit Status (bereits vorhanden, teilweise, manuell,
+         fehlt, noch zu klären). Zahlen gelten als Angabe des Betreibers.</p>
+      <p class="actions"><a class="primary" href="/blueprint/diagnose">Diagnose starten</a></p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem">
+    <h2>3 · Vorschlag</h2>
+    <p>Aus der Diagnose entsteht eine druckbare Diskussionsgrundlage mit
+       empfohlenen Modulen, erhaltenen Bestandssystemen und zu bestätigenden
+       Annahmen. Keine Preiszusagen, keine Integrations-Behauptungen ohne Nachweis.</p>
+  </div>
+
+  <p class="hint">
+    Katalog-Version: <strong>{{ catalog_version }}</strong>.
+    Diese Version wird in jedem erzeugten Vorschlag verankert, damit Berichte
+    reproduzierbar bleiben.
+  </p>
+</section>
+{% endblock %}

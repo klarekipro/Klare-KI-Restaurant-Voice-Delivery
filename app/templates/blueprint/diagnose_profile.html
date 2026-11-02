@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — {{ profile.restaurant_name }}{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card">
+  <div class="row space">
+    <div>
+      <h1>{{ profile.restaurant_name }}</h1>
+      <p class="muted">
+        {{ profile.city or "—" }} · {{ profile.cuisine or "—" }} ·
+        {{ profile.locations_count }} Standort{{ "e" if profile.locations_count != 1 else "" }}
+        {% if profile.contact_person %}· Ansprechpartner: {{ profile.contact_person }}
+          {% if profile.contact_role %}({{ profile.contact_role }}){% endif %}
+        {% endif %}
+      </p>
+    </div>
+    <form method="post" action="/blueprint/diagnose/{{ profile.id }}/status" class="inline">
+      <select name="status">
+        <option value="draft"  {% if profile.status == 'draft'  %}selected{% endif %}>Entwurf</option>
+        <option value="review" {% if profile.status == 'review' %}selected{% endif %}>In Prüfung</option>
+        <option value="shared" {% if profile.status == 'shared' %}selected{% endif %}>Freigegeben</option>
+      </select>
+      <button type="submit">Status setzen</button>
+    </form>
+  </div>
+
+  <div class="kpi-row" style="margin-top:1rem">
+    <div class="kpi-cell"><strong>{{ done }} / {{ total }}</strong> Bereiche beantwortet</div>
+    <div class="kpi-cell"><strong>{{ profile.catalog_version }}</strong> Katalog-Version</div>
+    <div class="kpi-cell"><strong>{{ profile.status }}</strong> Profilstatus</div>
+  </div>
+
+  <div class="actions" style="margin-top:1rem">
+    <a class="primary" href="/blueprint/proposal/{{ profile.id }}">Vorschlag anzeigen</a>
+    <form method="post" action="/blueprint/diagnose/{{ profile.id }}/delete"
+          onsubmit="return confirm('Dieses Profil mit allen Antworten unwiderruflich löschen?');"
+          style="display:inline">
+      <button class="danger" type="submit">Profil löschen</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Bereiche</h2>
+  <table>
+    <thead>
+      <tr><th>Bereich</th><th>Status</th><th>Werkzeug</th><th>Hinweise</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for area in areas %}
+        {% set f = findings.get(area.code) %}
+        <tr>
+          <td><strong>{{ area.title }}</strong><br>
+              <span class="small muted">{{ area.short }}</span></td>
+          <td>
+            {% if f %}
+              <span class="status-badge {{ f.status | bp_status_chip }}">{{ f.status | bp_status_de }}</span>
+              {% if f.verified %}<span class="chip ok" title="Vom Betrieb technisch bestätigt">verifiziert</span>{% endif %}
+            {% else %}
+              <span class="muted">— noch nicht beantwortet —</span>
+            {% endif %}
+          </td>
+          <td>{{ (f.current_tool if f else "") or "—" }}</td>
+          <td class="small">{{ (f.notes if f else "") or "—" }}</td>
+          <td><a class="link" href="/blueprint/diagnose/{{ profile.id }}/area/{{ area.code }}">
+            {{ "Bearbeiten" if f else "Beantworten" }}</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

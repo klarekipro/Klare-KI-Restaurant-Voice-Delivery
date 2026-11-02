@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — {{ area.title }}{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card">
+  <p class="small muted">
+    <a href="/blueprint/diagnose/{{ profile.id }}">← Zurück zum Profil</a>
+    · {{ profile.restaurant_name }} · Fortschritt: {{ done }} / {{ total }}
+  </p>
+  <h1>{{ area.title }}</h1>
+
+  <p class="small muted"><strong>Leitfragen für das Gespräch:</strong></p>
+  <ul class="shelf">
+    {% for q in area.guiding_questions %}<li>{{ q }}</li>{% endfor %}
+  </ul>
+
+  <form method="post" action="/blueprint/diagnose/{{ profile.id }}/area/{{ area.code }}">
+    <fieldset style="border:1px solid var(--border); border-radius:6px; padding:0.75rem;">
+      <legend><strong>Status</strong></legend>
+      {% for code in status_codes %}
+      <label class="inline" style="margin-right:0.75rem">
+        <input type="radio" name="status" value="{{ code }}"
+               {% if finding and finding.status == code %}checked{% elif not finding and code == 'unknown' %}checked{% endif %}
+               required>
+        <span class="status-badge {{ code | bp_status_chip }}">{{ code | bp_status_de }}</span>
+      </label>
+      {% endfor %}
+      <p class="small muted" style="margin-top:0.5rem">
+        „Noch zu klären" ist keine Lücke — der Bereich wird im nächsten Gespräch gemeinsam geprüft.
+      </p>
+    </fieldset>
+
+    <label>Aktuell genutztes Werkzeug (Herstellername, Freitext)
+      <input name="current_tool" maxlength="120"
+             value="{{ (finding.current_tool if finding else '') }}"
+             placeholder="z. B. Lightspeed, Lieferando, SumUp — oder leer lassen">
+    </label>
+
+    <div class="grid-2">
+      <label>Qualität (1 = schlecht, 5 = sehr gut)
+        <input name="quality" type="number" min="1" max="5"
+               value="{{ (finding.quality if finding and finding.quality) or '' }}">
+      </label>
+      <label>Automatisierungsgrad (1 = manuell, 5 = voll automatisch)
+        <input name="automation" type="number" min="1" max="5"
+               value="{{ (finding.automation if finding and finding.automation) or '' }}">
+      </label>
+    </div>
+
+    <label>Geschätzte manuelle Zeit pro Tag in Minuten (Angabe des Betreibers, unbestätigt)
+      <input name="time_loss_min_per_day" type="number" min="0" max="1440"
+             value="{{ (finding.time_loss_min_per_day if finding and finding.time_loss_min_per_day is not none) or '' }}">
+    </label>
+
+    <label class="inline">
+      <input type="checkbox" name="verified" value="1"
+             {% if finding and finding.verified %}checked{% endif %}>
+      Technisch mit dem Betrieb verifiziert (nicht nur Angabe)
+    </label>
+
+    <label>Hinweise (nur betriebsbezogen — keine Namen, Telefonnummern, E-Mails)
+      <textarea name="notes" rows="4" maxlength="500"
+                placeholder="Nur betriebsbezogene Hinweise.">{{ (finding.notes if finding else '') }}</textarea>
+    </label>
+
+    <div class="actions">
+      <button class="primary" type="submit">Antwort speichern</button>
+      <a class="link" href="/blueprint/diagnose/{{ profile.id }}">Abbrechen</a>
+    </div>
+    {% if next_area %}
+    <p class="small muted" style="margin-top:0.5rem">
+      Nach dem Speichern führt der nächste logische Schritt zu Bereich
+      <a href="/blueprint/diagnose/{{ profile.id }}/area/{{ next_area.code }}">
+        {{ next_area.title }}</a>.
+    </p>
+    {% endif %}
+  </form>
+</section>
+{% endblock %}
