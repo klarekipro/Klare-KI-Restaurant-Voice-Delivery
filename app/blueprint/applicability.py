@@ -64,16 +64,78 @@ def _unknown_or_missing(f) -> bool:
     return f is None or f.get("status") == "unknown"
 
 
+_PROBLEM_KEYWORDS = (
+    "problem", "fehler", "verloren", "verlust", "ausfall", "beschwerde",
+    "chaos", "verzögerung", "verspätung", "verspaetung", "unbeantwortet",
+    "schlecht", "stress", "nicht genug", "zu wenig", "überlastet", "ueberlastet",
+    "crash", "abstürz", "absturz",
+)
+
+_NEGATION_PATTERNS = (
+    "keine probleme", "kein problem", "funktioniert gut", "funktioniert",
+    "läuft gut", "laeuft gut", "alles ok", "alles okay", "ohne probleme",
+    "werden beantwortet",
+)
+
+
+def _notes_signal_problem(f) -> bool:
+    """Return True iff `notes` affirms a problem (not just mention keyword).
+
+    Negation phrases ("keine Probleme mit X") suppress the signal. MISSION 16
+    R3: bare keyword presence must not be read as "problem exists".
+    """
+    text = (f.get("notes") or "").lower()
+    if not text:
+        return False
+    if any(neg in text for neg in _NEGATION_PATTERNS):
+        return False
+    return any(kw in text for kw in _PROBLEM_KEYWORDS)
+
+
 def _strong_pain(f) -> bool:
-    """Explicit, measurable pain signal beyond status alone."""
+    """Measured or affirmed pain signal.
+
+    MISSION 16 R1: automation score alone is NOT evidence of a problem. A
+    well-run manual process can score ``automation=1`` by design. Pain is
+    only acknowledged when:
+
+    - ``quality <= 2`` (measured low quality), OR
+    - ``time_loss_min_per_day >= 60`` (measured time loss), OR
+    - the operator's notes contain an affirmative problem phrase without a
+      preceding negation.
+    """
     quality = f.get("quality")
-    automation = f.get("automation")
     time_loss = f.get("time_loss_min_per_day")
     return (
         (quality is not None and quality <= 2)
-        or (automation is not None and automation <= 2)
         or (time_loss is not None and time_loss >= 60)
+        or _notes_signal_problem(f)
     )
+
+
+def _is_measured(f) -> bool:
+    """Does the finding carry at least one measurement beyond raw status?"""
+    return (
+        f.get("quality") is not None
+        or f.get("time_loss_min_per_day") is not None
+        or bool(f.get("notes"))
+        or bool(f.get("verified"))
+    )
+
+
+def _calibrated_confidence(f, baseline: str) -> str:
+    """Downgrade `baseline` when the finding is status-only and unverified.
+
+    MISSION 16 R5: a bare ``status=missing`` with no quality/time/notes/
+    verified is NOT high data confidence.
+    """
+    if baseline != "high":
+        return baseline
+    if f.get("verified"):
+        return "high"
+    if _is_measured(f):
+        return "high"
+    return "medium"
 
 
 def _observation(area_code: str, label: str, f) -> tuple[str, str]:
@@ -103,21 +165,31 @@ def _ai_phone_reception(by_area):
                              "Telefonannahme funktioniert laut Angabe.",
                              (_observation("phone", "Telefonannahme funktioniert", phone),),
                              "high")
+    # MISSION 16 R4: available input with measured pain must preserve its own
+    # status in evidence, not fall through to a "teilweise" branch.
+    if _good(status) and _strong_pain(phone):
+        return Applicability("conditional",
+                             "Telefonannahme vorhanden, aber mit konkret genannter "
+                             "Belastung.",
+                             (_observation("phone",
+                                           "Status: vorhanden mit genannter Belastung",
+                                           phone),),
+                             _calibrated_confidence(phone, "medium"))
     if status == "missing":
         return Applicability("required",
                              "Telefonannahme fehlt vollständig.",
                              (_observation("phone", "Status: fehlt", phone),),
-                             "high")
+                             _calibrated_confidence(phone, "high"))
     if status == "manual" and _strong_pain(phone):
         return Applicability("required",
                              "Manuelle Telefonannahme mit konkret genannter Belastung.",
                              (_observation("phone", "Status: manuell", phone),),
-                             "high")
+                             _calibrated_confidence(phone, "high"))
     if status == "manual":
         return Applicability("conditional",
                              "Manuelle Telefonannahme, keine konkrete Belastung angegeben.",
                              (_observation("phone", "Status: manuell", phone),),
-                             "medium")
+                             "low")
     # partial
     return Applicability("conditional",
                          "Telefonannahme teilweise, Umfang offen.",
@@ -182,16 +254,23 @@ def _kds(by_area):
                              "Küchenorganisation funktioniert laut Angabe.",
                              (_observation("kitchen", "Status: vorhanden", kitchen),),
                              "high")
+    if _good(status) and _strong_pain(kitchen):
+        return Applicability("conditional",
+                             "Küche vorhanden, aber mit konkret genannter Belastung.",
+                             (_observation("kitchen",
+                                           "Status: vorhanden mit genannter Belastung",
+                                           kitchen),),
+                             _calibrated_confidence(kitchen, "medium"))
     if status == "missing":
         return Applicability("required",
                              "Keine strukturierte Küchenanzeige vorhanden.",
                              (_observation("kitchen", "Status: fehlt", kitchen),),
-                             "high")
+                             _calibrated_confidence(kitchen, "high"))
     if _strong_pain(kitchen):
         return Applicability("required",
                              "Küchenorganisation mit konkret genannter Belastung.",
                              (_observation("kitchen", f"Status: {status}", kitchen),),
-                             "medium")
+                             _calibrated_confidence(kitchen, "medium"))
     if status in ("manual", "partial"):
         return Applicability("conditional",
                              "Küchenorganisation nur teilweise, keine konkrete Belastung.",
@@ -283,16 +362,23 @@ def _crm_automation(by_area):
                              "Stammkundenpflege erfolgt laut Angabe.",
                              (_observation("crm", "Status: vorhanden", crm),),
                              "high")
+    if _good(status) and _strong_pain(crm):
+        return Applicability("conditional",
+                             "CRM vorhanden, aber mit konkret genannter Belastung.",
+                             (_observation("crm",
+                                           "Status: vorhanden mit genannter Belastung",
+                                           crm),),
+                             _calibrated_confidence(crm, "medium"))
     if status == "missing":
         return Applicability("required",
                              "Keine Stammkundenpflege.",
                              (_observation("crm", "Status: fehlt", crm),),
-                             "high")
+                             _calibrated_confidence(crm, "high"))
     if _strong_pain(crm):
         return Applicability("required",
                              "CRM-Prozess mit konkreter Belastung.",
                              (_observation("crm", f"Status: {status}", crm),),
-                             "medium")
+                             _calibrated_confidence(crm, "medium"))
     return Applicability("conditional",
                          "Stammkundenpflege nur teilweise.",
                          (_observation("crm", f"Status: {status}", crm),),
@@ -339,10 +425,15 @@ def _staff_automation(by_area):
         return Applicability("required",
                              "Manuelle Betriebsprozesse mit konkreter Belastung.",
                              (_observation("manual_ops", f"Status: {status}", manual_ops),),
-                             "high")
+                             _calibrated_confidence(manual_ops, "high"))
+    # MISSION 16 R1: a manual process without measured pain and without an
+    # affirmative problem note is NOT a sales target. It is a point of
+    # clarification, not a lead.
     if status in ("manual", "partial", "missing"):
-        return Applicability("conditional",
-                             "Hinweis auf manuelle Prozesse, ohne quantifizierte Belastung.",
+        return Applicability("not_applicable",
+                             "Manuelle Prozesse genannt, aber ohne nachweisbare "
+                             "Belastung oder benannte Probleme — kein "
+                             "automatischer Verbesserungsvorschlag.",
                              (_observation("manual_ops", f"Status: {status}", manual_ops),),
                              "medium")
     return Applicability("insufficient_data", "Unerwarteter Status.", (), "low")
@@ -350,22 +441,36 @@ def _staff_automation(by_area):
 
 def _review_mgmt(by_area):
     # Blueprint has no dedicated reviews area; the module only applies if the
-    # operator explicitly flagged a review-management pain in CRM notes
-    # (e.g. "Google-Bewertungen bleiben unbeantwortet"). Without that evidence,
-    # the module stays silent.
+    # operator explicitly flagged a review-management problem in CRM notes
+    # (e.g. "Google-Bewertungen bleiben unbeantwortet"). MISSION 16 R3: mere
+    # keyword presence is not a problem assertion — "Keine Probleme mit
+    # Google-Bewertungen" or "alle Rezensionen werden beantwortet" must
+    # NOT trigger this module.
     crm = _finding(by_area, "crm")
     if _unknown_or_missing(crm):
         return Applicability("insufficient_data",
                              "CRM-Bereich noch nicht beantwortet.", (), "low")
     notes = (crm.get("notes") or "").lower()
     review_terms = ("bewertung", "review", "google", "rezension")
-    if any(term in notes for term in review_terms):
-        return Applicability("conditional",
-                             "Hinweis auf Bewertungsmanagement in den Notizen.",
-                             (_observation("crm", "Bewertungen in Notizen genannt", crm),),
-                             "low")
-    return Applicability("not_applicable",
-                         "Kein Hinweis auf Bewertungs-Problem.", (), "high")
+    mentions_reviews = any(term in notes for term in review_terms)
+    if not mentions_reviews:
+        return Applicability("not_applicable",
+                             "Kein Hinweis auf Bewertungs-Problem.", (), "high")
+    # If reviews are mentioned, require either a problem keyword or a strong
+    # pain signal in the CRM finding itself to turn mention into assertion.
+    affirms_problem = _notes_signal_problem(crm) or _strong_pain(crm)
+    if not affirms_problem:
+        return Applicability("not_applicable",
+                             "Bewertungen in den Notizen erwähnt, aber kein "
+                             "Problem affirmiert (ggf. Negation vorhanden).",
+                             (_observation("crm",
+                                           "Bewertungen erwähnt, kein Problem affirmiert",
+                                           crm),),
+                             "medium")
+    return Applicability("conditional",
+                         "Bewertungsmanagement in Notizen als Problem genannt.",
+                         (_observation("crm", "Bewertungs-Problem in Notizen", crm),),
+                         "low")
 
 
 def _workflow_automation(by_area):

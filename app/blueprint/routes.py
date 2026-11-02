@@ -440,12 +440,15 @@ def proposal_view(request: Request, pid: int,
     finally:
         conn.close()
     selected_codes = {s["improvement_code"] for s in selections if s["selected"]}
-    # Manual override only visible when source is 'manual' (D05).
+    # MISSION 16 R6: manual overrides only count when the row is ALSO
+    # `selected=1`. Legacy MISSION 12 saves wrote `selected=0, medium` rows
+    # with `priority_source='manual'` after the MISSION 14 migration; those
+    # must not override new engine recommendations.
     manual_priority = {
         s["improvement_code"]: s["priority"]
-        for s in selections if s.get("priority_source") == "manual"
+        for s in selections
+        if s.get("priority_source") == "manual" and s["selected"]
     }
-    # Build the display priority: user override wins, otherwise engine.
     engine_priority = {s.improvement.code: _engine_priority(s)
                        for s in result.suggestions}
     display_priority = {**engine_priority, **manual_priority}
@@ -461,6 +464,7 @@ def proposal_view(request: Request, pid: int,
              manual_priority=manual_priority,
              preserved_system_label=gap.preserved_system_label,
              improvement_by_code=catalog.IMPROVEMENT_BY_CODE,
+             areas_by_code={a.code: a for a in catalog.DIAGNOSE_AREAS},
              answered=sum(1 for f in findings if f["status"] != "unknown"),
              total=len(catalog.DIAGNOSE_AREAS)),
     )
@@ -545,7 +549,8 @@ def proposal_report(request: Request, pid: int,
     display_priority = {s.improvement.code: _engine_priority(s)
                         for s in result.suggestions}
     for code, row in selected.items():
-        if row.get("priority_source") == "manual":
+        # MISSION 16 R6: only honour manual overrides on actually-selected rows.
+        if row.get("priority_source") == "manual" and row.get("selected"):
             display_priority[code] = row["priority"]
 
     now_local = datetime.now(ZoneInfo("Europe/Berlin"))
@@ -561,6 +566,7 @@ def proposal_report(request: Request, pid: int,
              display_priority=display_priority,
              preserved_system_label=gap.preserved_system_label,
              improvement_by_code=catalog.IMPROVEMENT_BY_CODE,
+             areas_by_code={a.code: a for a in catalog.DIAGNOSE_AREAS},
              generated_at=now_local.strftime("%d.%m.%Y %H:%M"),
              total=len(catalog.DIAGNOSE_AREAS),
              outcome=result.outcome),
