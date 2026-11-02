@@ -9,14 +9,14 @@
     <div class="order-card">
       <div class="row space">
         <strong>#{{ o.id }}</strong>
-        <span class="chip">{{ o.status }}</span>
+        <span class="status-badge {{ o.status | status_class }}">{{ o.status | status_de }}</span>
       </div>
       <ul class="items">
         {% for it in items_by_order[o.id] %}
         <li><span class="qty">{{ it.qty }}×</span> {{ it.name_snapshot }}</li>
         {% endfor %}
       </ul>
-      <div class="muted">bestätigt: {{ o.confirmed_at }}</div>
+      <div class="muted">bestätigt um {{ o.confirmed_at | time_de }}</div>
       <div class="actions">
         {% if o.status == 'confirmed' %}
         <form method="post" action="/kitchen/{{ o.id }}/start" class="inline">
@@ -35,7 +35,7 @@
   {% if not ready %}<p class="muted">Keine wartenden Bestellungen.</p>{% endif %}
   <ul class="shelf">
     {% for r in ready %}
-    <li>#{{ r.id }} <span class="muted">fertig {{ r.ready_at }}</span></li>
+    <li>#{{ r.id }} <span class="muted">fertig seit {{ r.ready_at | time_de }}</span></li>
     {% endfor %}
   </ul>
 </section>

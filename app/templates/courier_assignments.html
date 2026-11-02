@@ -10,10 +10,10 @@
       <a class="order-link" href="/courier/{{ o.id }}">
         <div class="row space">
           <strong>#{{ o.id }}</strong>
-          <span class="chip">{{ o.status }}</span>
+          <span class="status-badge {{ o.status | status_class }}">{{ o.status | status_de }}</span>
         </div>
         <div>{{ o.street }} {{ o.house_number }}, {{ o.plz }} {{ o.city }}</div>
-        <div class="muted">Zugewiesen: {{ o.assigned_at }}</div>
+        <div class="muted">Zugewiesen um {{ o.assigned_at | time_de }}</div>
       </a>
     </li>
     {% endfor %}
@@ -23,7 +23,7 @@
   {% if not done %}<p class="muted">Noch keine Lieferungen heute.</p>{% endif %}
   <ul>
     {% for d in done %}
-    <li>#{{ d.id }} · {{ d.total_cents | cents }} · <span class="muted">{{ d.delivered_at }}</span></li>
+    <li>#{{ d.id }} · {{ d.total_cents | cents }} · <span class="muted">{{ d.delivered_at | datetime_de }}</span></li>
     {% endfor %}
   </ul>
 </section>

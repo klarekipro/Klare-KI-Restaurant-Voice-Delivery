@@ -150,9 +150,11 @@ def test_role_based_access(client):
     assert r.status_code in (401, 403)
     logout(client)
 
-    # Anonymous call simulator access blocked.
+    # Anonymous call simulator access blocked — redirect to login.
     r = client.get("/call", follow_redirects=False)
-    assert r.status_code in (401, 403)
+    assert r.status_code in (303, 401, 403)
+    if r.status_code == 303:
+        assert r.headers["location"] == "/login"
 
 
 def test_reject_flow_blocks_kitchen(client):

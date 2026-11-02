@@ -3,11 +3,11 @@
 {% block content %}
 <section class="card narrow">
   <h1>Lieferung #{{ bundle.order.id }}</h1>
-  <p><span class="chip">{{ bundle.order.status }}</span></p>
+  <p><span class="status-badge status-badge--lg {{ bundle.order.status | status_class }}">{{ bundle.order.status | status_de }}</span></p>
 
   {% if bundle.customer %}
   <h2>Empfänger</h2>
-  <p><strong>{{ bundle.customer.name.split(' ')[0] }}</strong></p>
+  <p><strong>{{ ((bundle.customer.name or '')).split(' ')[0] or 'Kundin / Kunde' }}</strong></p>
   <p class="address">
     {{ bundle.customer.street }} {{ bundle.customer.house_number }}<br>
     {{ bundle.customer.plz }} {{ bundle.customer.city }}

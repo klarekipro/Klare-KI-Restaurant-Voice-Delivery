@@ -37,7 +37,7 @@
   </nav>
   <div class="user">
     {% if user %}
-      <span>{{ user.display_name }} · {{ user.role }}</span>
+      <span>{{ user.display_name }} · {{ user.role | role_de }}</span>
       <form method="post" action="/logout" style="display:inline">
         <button class="link">Abmelden</button>
       </form>
@@ -47,6 +47,20 @@
   </div>
 </header>
 <main class="container">
+  {% set flash_messages = {
+    'approved': ('ok', 'Bestellung bestätigt und an die Küche übergeben.'),
+    'rejected': ('ok', 'Bestellung abgelehnt.'),
+    'start': ('ok', 'Zubereitung gestartet.'),
+    'ready': ('ok', 'Bestellung als fertig markiert.'),
+    'assigned': ('ok', 'Fahrer zugewiesen.'),
+    'delivered': ('ok', 'Lieferung abgeschlossen.'),
+    'failed': ('err', 'Zustellung als fehlgeschlagen markiert.'),
+    'saved': ('ok', 'Kundendaten gespeichert.'),
+  } %}
+  {% set _f = request.query_params.get('flash') %}
+  {% if _f and _f in flash_messages %}
+    <div class="flash flash--{{ flash_messages[_f][0] }}">{{ flash_messages[_f][1] }}</div>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 </body>
