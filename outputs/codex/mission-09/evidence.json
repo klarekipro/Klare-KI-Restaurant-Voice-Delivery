@@ -1,0 +1,139 @@
+{
+  "source": "5d06429b8b71c58266f58fa5fc03ddf634ad7264",
+  "local_queue_patch": "784e23b",
+  "original_mission": "86907825eb6d",
+  "original_records_sha256": "43bc03fa48c67095d678f80a737d606dcb06ba4988ab0fcce88470ac19f6618c",
+  "current_records_sha256": "43bc03fa48c67095d678f80a737d606dcb06ba4988ab0fcce88470ac19f6618c",
+  "original_records_unchanged": true,
+  "original_file_count": 102,
+  "original_manifest_sha256": "a95530bd079f4f6682d4b9e8c30fad06c082cf36c15e641156b426b63fc85577",
+  "current_manifest_sha256": "a95530bd079f4f6682d4b9e8c30fad06c082cf36c15e641156b426b63fc85577",
+  "original_files_unchanged": true,
+  "original_status": "",
+  "original_head": "5d06429b8b71c58266f58fa5fc03ddf634ad7264",
+  "original_state": "WAITING_APPROVAL",
+  "original_pid": 97481,
+  "original_pid_present": false,
+  "original_group_present": false,
+  "original_counts": {
+    "missions": 1,
+    "tasks": 1,
+    "attempts": 1,
+    "outcomes": 0,
+    "events": 6,
+    "tests": 0,
+    "approvals": 1,
+    "checkpoints": 0,
+    "handoffs": 0,
+    "commits": 0
+  },
+  "real_probes": [
+    {
+      "name": "claude-timeout",
+      "exit_code": -15,
+      "duration": 0.5606692910660058,
+      "timed_out": true,
+      "terminated": true,
+      "limited": false,
+      "files_unchanged": true
+    },
+    {
+      "name": "claude-answer",
+      "exit_code": 0,
+      "duration": 4.0328434580005705,
+      "timed_out": null,
+      "terminated": true,
+      "limited": false,
+      "files_unchanged": true
+    },
+    {
+      "name": "codex-answer",
+      "exit_code": 0,
+      "duration": 5.072125958045945,
+      "timed_out": null,
+      "terminated": true,
+      "limited": false,
+      "files_unchanged": true
+    }
+  ],
+  "real_first_recovery": {
+    "mission": "764e24a6287d",
+    "state": "WAITING_APPROVAL",
+    "attempts": [
+      {
+        "id": 1,
+        "provider": "claude",
+        "state": "FAILED",
+        "duration": 0.559983666986227,
+        "exit_code": -15,
+        "error": "invocation deadline exceeded"
+      }
+    ],
+    "checks": [
+      {
+        "name": "compile",
+        "passed": 1
+      }
+    ],
+    "checkpoints": [
+      {
+        "phase": "PRESERVED",
+        "classification": "incomplete-unverified"
+      }
+    ],
+    "files_unchanged": true,
+    "duplicate_drive_added_attempts": 0
+  },
+  "real_verified_recovery": {
+    "mission": "a626518cbb1e",
+    "state": "COMPLETED",
+    "attempts": [
+      {
+        "id": 1,
+        "provider": "claude",
+        "state": "FAILED",
+        "duration": 0.5532825421541929,
+        "exit_code": -15,
+        "error": "invocation deadline exceeded"
+      },
+      {
+        "id": 2,
+        "provider": "codex",
+        "state": "COMPLETED",
+        "duration": 7.47640904202126,
+        "exit_code": 0,
+        "error": "Reading additional input from stdin...\n"
+      },
+      {
+        "id": 3,
+        "provider": "claude",
+        "state": "COMPLETED",
+        "duration": 13.741642291191965,
+        "exit_code": 0,
+        "error": ""
+      }
+    ],
+    "checks": [
+      {
+        "name": "compile",
+        "passed": 1
+      },
+      {
+        "name": "compile",
+        "passed": 1
+      },
+      {
+        "name": "compile",
+        "passed": 1
+      }
+    ],
+    "checkpoints": [
+      {
+        "phase": "HANDED_OFF",
+        "classification": "incomplete-checks-passed"
+      }
+    ],
+    "files_unchanged": true,
+    "duplicate_drive_added_attempts": 0
+  }
+}

@@ -18,6 +18,8 @@ import uuid
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import quota
 import deferred
+import execution
+import math
 
 SCHEMA = {'type':'object','properties':{'status':{'type':'string','enum':['done','repair','approval','limited']},'summary':{'type':'string'},'findings':{'type':'array','items':{'type':'string'}}},'required':['status','summary','findings'],'additionalProperties':False}
 STATES = {'QUEUED','RUNNING','VALIDATING','COMPLETED','RETRYABLE_FAILURE','PROVIDER_LIMITED','WAITING_APPROVAL','FAILED','CANCELLED','WAITING_QUOTA','STOPPED'}
@@ -121,7 +123,7 @@ def isolation_probe(worktree,scratch):
     forbidden.write_text('canary')
     try:
         script='import pathlib,sys; p=pathlib.Path(sys.argv[1]);\ntry: p.read_text()\nexcept PermissionError: pass\nelse: sys.exit(7)\ntry: p.write_text("bad")\nexcept PermissionError: pass\nelse: sys.exit(8)\nprint("isolated")'
-        r=run(['sandbox-exec','-p',profile(worktree,scratch),sys.executable,'-c',script,str(forbidden)])
+        r=run(['sandbox-exec','-p',profile(worktree,scratch),sys.executable,'-c',script,str(forbidden)],timeout=20)
         if r.returncode or 'isolated' not in r.stdout: raise Hold('OS isolation probe failed: '+r.stderr[-500:])
     finally: forbidden.unlink(missing_ok=True)
 
@@ -159,13 +161,13 @@ class CLIProvider:
         schema=scratch/'schema.json';schema.write_text(json.dumps(SCHEMA));output=scratch/'result.json'
         empty=scratch/'mcp.json';empty.write_text('{"mcpServers":{}}')
         if provider=='claude':
-            credential=run(['security','find-generic-password','-s','Claude Code-credentials','-w'])
+            credential=run(['security','find-generic-password','-s','Claude Code-credentials','-w'],timeout=10)
             if credential.returncode==0:
                 try:
                     token=json.loads(credential.stdout).get('claudeAiOauth',{}).get('accessToken')
                     if token: env['CLAUDE_CODE_OAUTH_TOKEN']=token
                 except ValueError: pass
-            args=['claude','-p','--output-format','json','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
+            args=['claude','-p','--output-format','stream-json','--verbose','--include-partial-messages','--json-schema',json.dumps(SCHEMA),'--setting-sources','project','--strict-mcp-config','--mcp-config',str(empty),'--permission-mode','dontAsk','--tools','Read,Grep,Glob,Edit,Write,Agent','--allowedTools','Read,Grep,Glob,Edit,Write,Agent','--no-session-persistence','--max-budget-usd','1',prompt]
         else:
             args=['codex','exec','--ignore-user-config','--ignore-rules','--disable','apps','--disable','browser_use','--disable','computer_use','-c','approval_policy="never"','-c','shell_environment_policy.inherit="none"','--ephemeral','--json','--output-schema',str(schema),'--output-last-message',str(output),'-C',str(worktree),prompt]
         if provider=='claude' and probe:
@@ -174,27 +176,25 @@ class CLIProvider:
         else:
             codex_probe(worktree,scratch,env,probe)
             args=args[:2]+codex_options(worktree,scratch,probe)+args[2:]
-        start=time.monotonic()
-        proc=subprocess.Popen(args,cwd=worktree,env=env,text=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-        if getattr(self,'on_start',None): self.on_start(proc.pid)
-        deadline=time.monotonic()+timeout
-        try:
-            while True:
-                if getattr(self,'control',lambda:False)(): raise Hold('operator pause/stop requested')
-                remaining=deadline-time.monotonic()
-                if remaining<=0: raise subprocess.TimeoutExpired(args,timeout)
-                try:
-                    stdout,stderr=proc.communicate(timeout=min(.5,remaining));break
-                except subprocess.TimeoutExpired: pass
-        except BaseException:
-            os.killpg(proc.pid,signal.SIGTERM)
-            try: proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired: os.killpg(proc.pid,signal.SIGKILL);proc.communicate()
-            raise
+        if getattr(self,'mission_deadline',None) is not None:
+            timeout=min(timeout,self.mission_deadline-time.time())
+        if timeout<=0: raise Hold('mission duration exhausted during preflight')
+        directory=getattr(self,'artifact_dir',scratch/'execution')
+        captured=execution.execute(args,worktree,env,timeout,directory,
+            getattr(self,'on_start',None),getattr(self,'control',None),
+            getattr(self,'heartbeat',None))
+        stdout,stderr=captured['stdout'],captured['stderr']
+        if captured['timed_out'] or not captured['terminated']:
+            return dict(exit_code=captured['exit_code'],result=None,usage={},
+                error='invocation deadline exceeded' if captured['timed_out'] else 'process group termination unconfirmed',
+                duration=captured['duration'],limited=False,timed_out=captured['timed_out'],
+                terminated=captured['terminated'],artifacts=captured['artifacts'])
         usage={};result=None;limited=False;retry_at=None;quota_code=None;error=stderr[-2000:]
         try:
             if provider=='claude':
-                envelope=json.loads(stdout);usage={k:envelope[k] for k in ('usage','total_cost_usd') if k in envelope}
+                envelopes=[json.loads(line) for line in stdout.splitlines() if line.strip()]
+                envelope=next((e for e in reversed(envelopes) if e.get('type')=='result'),{})
+                usage={k:envelope[k] for k in ('usage','total_cost_usd') if k in envelope}
                 result=envelope.get('structured_output')
                 # Only documented machine error codes; unknown nonzero exits are not limits.
                 limited=envelope.get('error')=='rate_limit_error' or (envelope.get('is_error') is True and envelope.get('api_error_status')==429)
@@ -212,7 +212,7 @@ class CLIProvider:
         except (ValueError,TypeError): error='malformed provider JSON'
         valid=isinstance(result,dict) and set(result)=={'status','summary','findings'} and result['status'] in ('done','repair','approval','limited') and isinstance(result['summary'],str) and isinstance(result['findings'],list) and all(isinstance(x,str) for x in result['findings'])
         if not valid: error+='; structured output missing/invalid; events: '+stdout[-4000:]
-        return dict(exit_code=proc.returncode,result=result if valid else None,usage=usage,error=error,duration=time.monotonic()-start,limited=limited,retry_at=retry_at,quota_code=quota_code)
+        return dict(exit_code=captured['exit_code'],result=result if valid else None,usage=usage,error=error,duration=captured['duration'],terminated=True,artifacts=captured['artifacts'],limited=limited,retry_at=retry_at,quota_code=quota_code)
 
     def probe(self,provider,worktree,timeout,scratch):
         if provider=='claude': isolation_probe(worktree,scratch)
@@ -229,7 +229,14 @@ class Engine:
         return self.c.execute('INSERT INTO tasks(mission,provider,state,kind,prompt,retries) VALUES(?,?,\'QUEUED\',?,?,?)',(m,p,kind,prompt,retries)).lastrowid
     def start(self,definition,repo,mission_id=None):
         d=json.loads(Path(definition).read_text())
-        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks','auto_resume_quota','quota_probe_authorized','not_before'}
+        allowed={'name','source','prompt','checks','max_invocations','max_retries','max_failures','max_seconds','max_concurrent','provider','fallback','approval_required','python','max_cost_usd','allow_edits','review_fallback','checkpoint_checks','auto_resume_quota','quota_probe_authorized','not_before','invocation_seconds','timeout_recovery'}
+        for key,default in (('max_seconds',600),('invocation_seconds',900)):
+            value=d.get(key,default)
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<0 or (key=='invocation_seconds' and value==0):
+                raise Hold('invalid finite time limit: '+key)
+        if d.get('timeout_recovery','hold') not in ('hold','checkpoint'): raise Hold('invalid timeout recovery policy')
+        if d.get('timeout_recovery')=='checkpoint' and not d.get('checkpoint_checks',d.get('checks')):
+            raise Hold('timeout recovery requires external checkpoint checks')
         if d.get('not_before'): deferred.parse_time(d['not_before'])
         if set(d)-allowed: raise Hold('unknown mission options')
         if not all(x in CHECKS for x in d.get('checkpoint_checks',d.get('checks',[]))): raise Hold('checkpoint command outside allowlist')
@@ -284,19 +291,39 @@ class Engine:
             self.checkpoint_hook('PRESERVED')
         return self.continue_checkpoint(m,a,work,d)
 
+    def timeout_checkpoint(self,m,a,t,work,d,result):
+        self.c.execute("UPDATE attempts SET state='FAILED' WHERE id=?",(a,))
+        self.s.event(m,'execution_timeout',json.dumps({'attempt':a,'terminated':result.get('terminated'),'artifacts':result.get('artifacts')}))
+        try:
+            pid=self.c.execute('SELECT pid FROM attempts WHERE id=?',(a,)).fetchone()[0]
+            if result.get('terminated') is not True or (pid and (execution.alive(pid) or execution.alive(pid,True))):
+                raise Hold('process/group termination not confirmed; files may still change')
+            control=self.c.execute('SELECT state,paused FROM missions WHERE id=?',(m,)).fetchone()
+            if control['state']=='CANCELLED': return False
+            # Preservation/validation is safe even without retry authorization. No commit or replay in that case.
+            return self.checkpoint(m,a,t,work,d)
+        except Exception as exc:
+            self.s.hold(m,'timeout recovery held: '+str(exc));return False
+
     def checkpoint_hook(self,phase):
         # Fault injection is an in-process test seam, never a mission-defined command.
         pass
 
     def continue_checkpoint(self,m,a,work,d):
+        pid=self.c.execute('SELECT pid FROM attempts WHERE id=?',(a,)).fetchone()[0]
+        if pid and (execution.alive(pid) or execution.alive(pid,True)):
+            raise Hold('checkpoint process/group still alive or identity uncertain')
         cp=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
         if cp['phase']=='HANDED_OFF': return True
         if self.fingerprint(work)!=cp['digest']: raise Hold('checkpoint contents changed since preservation/validation')
         task=self.c.execute('SELECT * FROM tasks WHERE id=?',(cp['task'],)).fetchone()
         other='codex' if task['provider']=='claude' else 'claude'
         available=self.c.execute('SELECT available FROM availability WHERE provider=?',(other,)).fetchone()
+        captured=self.c.execute('SELECT payload FROM outcomes WHERE attempt=?',(a,)).fetchone()
+        timed_out=bool(captured and json.loads(captured[0]).get('timed_out'))
 
         if cp['phase']=='PRESERVED':
+            if timed_out and not d.get('checkpoint_checks',d.get('checks',[])): raise Hold('timeout recovery requires external checks')
             if git(work,'rev-parse','HEAD')!=cp['base_sha']: raise Hold('checkpoint base changed before validation')
             self.s.state(m,'VALIDATING')
             checkpoint_policy={**d,'checks':d.get('checkpoint_checks',d.get('checks',[]))}
@@ -304,6 +331,15 @@ class Engine:
             if not self.validate(m,a,work,checkpoint_policy): raise Hold('incomplete checkpoint failed external checks; no commit or handoff')
             if self.fingerprint(work)!=cp['digest']: raise Hold('external checks changed checkpoint contents')
             self.c.execute("UPDATE checkpoints SET phase='VALIDATED',classification='incomplete-checks-passed' WHERE id=?",(cp['id'],));self.checkpoint_hook('VALIDATED')
+        if timed_out:
+            control=self.c.execute('SELECT state,paused,started FROM missions WHERE id=?',(m,)).fetchone()
+            if control['paused'] or control['state']=='CANCELLED': raise Hold('operator interrupted timeout recovery')
+            if d.get('timeout_recovery','hold')!='checkpoint': raise Hold('timeout checkpoint validated; explicit local-only recovery authorization required')
+            if not d.get('checkpoint_checks',d.get('checks',[])): raise Hold('timeout recovery requires external checks')
+            if task['retries']>=d.get('max_retries',1): raise Hold('timeout retry limit reached')
+            if time.time()-control['started']>=d.get('max_seconds',600): raise Hold('mission duration exhausted')
+            count=self.c.execute('SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=?',(m,)).fetchone()[0]
+            if count>=d.get('max_invocations',4): raise Hold('invocation limit reached')
         cp=self.c.execute('SELECT * FROM checkpoints WHERE attempt=?',(a,)).fetchone()
         if cp['phase']=='VALIDATED':
             if self.fingerprint(work)!=cp['digest']: raise Hold('validated checkpoint changed before commit')
@@ -324,15 +360,18 @@ class Engine:
         committed_digest=hashlib.sha256(json.dumps(committed_manifest,sort_keys=True).encode()).hexdigest()
         if committed_digest!=cp['digest']: raise Hold('committed tree differs from validated checkpoint')
         if git(work,'rev-parse','HEAD')!=cp['commit_sha'] or git(work,'status','--porcelain'): raise Hold('checkpoint commit no longer matches clean worktree')
-        candidates=([other,task['provider']] if d.get('fallback') else [task['provider']])
+        allow_fallback=d.get('fallback') and (task['kind']!='review' or d.get('review_fallback'))
+        candidates=([other,task['provider']] if allow_fallback else [task['provider']])
         selected=next((p for p in candidates if not (self.c.execute('SELECT available FROM availability WHERE provider=?',(p,)).fetchone() or {'available':1})['available']==0),None)
-        if selected is None: return quota.enter(self,m,task,work,d)
+        if selected is None:
+            if timed_out: raise Hold('no available provider for timeout checkpoint; no quota inference')
+            return quota.enter(self,m,task,work,d)
         other=selected
         self.c.execute('BEGIN IMMEDIATE')
         try:
-            payload={'checkpoint':cp['id'],'commit':cp['commit_sha'],'classification':'incomplete-checks-passed','completion_checks_pending':d.get('checks',[]),'retry_at':None}
-            next_task=self.task(m,other,task['kind'],task['prompt']+'\nContinue validated but INCOMPLETE checkpoint '+json.dumps(payload)+'. Inspect the saved changes; finish remaining work and report only task-scoped results.',task['retries'])
-            self.c.execute("UPDATE tasks SET state='PROVIDER_LIMITED' WHERE id=?",(task['id'],))
+            payload={'checkpoint':cp['id'],'commit':cp['commit_sha'],'classification':'incomplete-checks-passed','completion_checks_pending':d.get('checks',[]),'retry_at':None,'reason':'timeout' if timed_out else 'provider_limit'}
+            next_task=self.task(m,other,task['kind'],task['prompt']+'\nContinue validated but INCOMPLETE checkpoint '+json.dumps(payload)+'. Inspect the saved changes; finish remaining work and report only task-scoped results.',task['retries']+int(timed_out))
+            self.c.execute("UPDATE tasks SET state=? WHERE id=?",('FAILED' if timed_out else 'PROVIDER_LIMITED',task['id']))
             self.c.execute('INSERT INTO handoffs(mission,from_attempt,to_task,payload) VALUES(?,?,?,?)',(m,a,next_task,json.dumps(payload)))
             self.c.execute("UPDATE checkpoints SET phase='HANDED_OFF' WHERE id=?",(cp['id'],));self.s.state(m,'QUEUED')
             self.c.execute('COMMIT')
@@ -459,7 +498,13 @@ class Engine:
         # A durably captured limit outcome can be reconciled without replaying the CLI.
         pending=self.c.execute("SELECT a.id,a.task,a.provider,o.payload FROM attempts a JOIN tasks t ON t.id=a.task JOIN outcomes o ON o.attempt=a.id LEFT JOIN checkpoints p ON p.attempt=a.id WHERE t.mission=? AND p.id IS NULL AND a.id NOT IN (SELECT attempt FROM probe_attempts)",(m,)).fetchall()
         for a in pending:
-            if not json.loads(a['payload']).get('limited'): continue
+            captured=json.loads(a['payload'])
+            if captured.get('timed_out') or captured.get('terminated') is False:
+                row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
+                task=self.c.execute('SELECT * FROM tasks WHERE id=?',(a['task'],)).fetchone()
+                if not self.timeout_checkpoint(m,a['id'],task,Path(row['worktree']),json.loads(row['definition']),captured): return False
+                continue
+            if not captured.get('limited'): continue
             quota.confirm(self,a['provider'],json.loads(a['payload']))
             row=self.c.execute('SELECT * FROM missions WHERE id=?',(m,)).fetchone()
             self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a['id'],))
@@ -542,9 +587,12 @@ class Engine:
                 if not isinstance(self.provider,CLIProvider): pass
                 else: isolation_probe(work,tmp)
                 if isinstance(self.provider,CLIProvider):
+                    self.provider.mission_deadline=row['started']+d.get('max_seconds',600)
+                    self.provider.artifact_dir=self.s.path.parent/'attempts'/str(a)
+                    self.provider.heartbeat=lambda data:self.s.event(m,'process_activity',json.dumps(dict(attempt=a,**data)))
                     self.provider.on_start=lambda pid:self.c.execute('UPDATE attempts SET pid=? WHERE id=?',(pid,a))
                     self.provider.control=lambda:bool(self.c.execute("SELECT paused OR state='CANCELLED' FROM missions WHERE id=?",(m,)).fetchone()[0])
-                r=self.provider.execute(t['provider'],work,prompt,min(180,d.get('max_seconds',600)-(time.time()-row['started'])),tmp)
+                r=self.provider.execute(t['provider'],work,prompt,min(d.get('invocation_seconds',900),d.get('max_seconds',600)-(time.time()-row['started'])),tmp)
         except (Exception,KeyboardInterrupt) as exc:
             self.c.execute("UPDATE attempts SET state='FAILED',error=? WHERE id=?",(str(exc),a));
             if self.c.execute('SELECT state FROM missions WHERE id=?',(m,)).fetchone()[0]!='CANCELLED': self.s.hold(m,'execution interrupted or isolation unavailable: '+str(exc))
@@ -556,6 +604,8 @@ class Engine:
             self.c.execute('COMMIT')
         except BaseException: self.c.execute('ROLLBACK');raise
         self.checkpoint_hook('OUTCOME_CAPTURED')
+        if r.get('timed_out') or r.get('terminated') is False:
+            return self.timeout_checkpoint(m,a,t,work,d,r)
         if r.get('limited'):
             quota.confirm(self,t['provider'],r)
             self.c.execute("INSERT OR REPLACE INTO availability VALUES(?,0,'confirmed provider limit; retry time unknown',NULL)",(t['provider'],));self.c.execute("UPDATE attempts SET state='PROVIDER_LIMITED' WHERE id=?",(a,));self.s.state(m,'PROVIDER_LIMITED')
@@ -668,9 +718,8 @@ def main():
                     if row['state']!='WAITING_APPROVAL': raise Hold('mission is not waiting for approval')
                     if git(row['worktree'],'status','--porcelain'): raise Hold('preserve/review/commit changes manually before approval')
                     for attempt in s.c.execute('SELECT a.pid FROM attempts a JOIN tasks t ON t.id=a.task WHERE t.mission=? AND a.pid IS NOT NULL',(m,)):
-                        try: os.kill(attempt[0],0)
-                        except ProcessLookupError: pass
-                        else: raise Hold('recorded process still alive; inspect before approval')
+                        if execution.alive(attempt[0]) or execution.alive(attempt[0],True):
+                            raise Hold('recorded process/group still alive; inspect before approval')
                     s.c.execute('UPDATE approvals SET approved=1 WHERE mission=?',(m,))
                     s.c.execute("UPDATE tasks SET state='QUEUED' WHERE mission=? AND state IN ('RUNNING','WAITING_APPROVAL')",(m,))
                     s.c.execute("UPDATE attempts SET state='FAILED' WHERE task IN (SELECT id FROM tasks WHERE mission=?) AND state='RUNNING'",(m,))
