@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — Profil bearbeiten{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card narrow">
+  <p class="small muted">
+    <a href="/blueprint/diagnose/{{ profile.id }}">← Zurück zum Profil</a>
+  </p>
+  <h1>Reiter bearbeiten</h1>
+  <p class="small muted">
+    Diagnose-Antworten bleiben erhalten. Nur die Stammdaten des befragten
+    Restaurants werden geändert.
+  </p>
+  <form method="post" action="/blueprint/diagnose/{{ profile.id }}/edit">
+    <label>Restaurantname <span class="err">*</span>
+      <input name="restaurant_name" maxlength="120" required
+             value="{{ profile.restaurant_name }}">
+    </label>
+    <label>Stadt
+      <input name="city" maxlength="80" value="{{ profile.city }}">
+    </label>
+    <label>Küchen-Stil
+      <input name="cuisine" maxlength="80" value="{{ profile.cuisine }}">
+    </label>
+    <label>Standortanzahl
+      <input name="locations_count" type="number" min="1" max="999"
+             value="{{ profile.locations_count }}">
+    </label>
+    <label>Ansprechpartner
+      <input name="contact_person" maxlength="120"
+             value="{{ profile.contact_person }}">
+    </label>
+    <label>Rolle des Ansprechpartners
+      <input name="contact_role" maxlength="60"
+             value="{{ profile.contact_role }}">
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit">Speichern</button>
+      <a class="secondary" href="/blueprint/diagnose/{{ profile.id }}">Abbrechen</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

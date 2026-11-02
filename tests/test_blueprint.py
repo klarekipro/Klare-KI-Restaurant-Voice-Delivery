@@ -176,31 +176,33 @@ def test_unknown_is_not_a_gap(client):
     assert "Empfohlene Verbesserungen" in r.text
     # Strict: with only an `unknown` answer, no suggestion row may appear.
     assert "aktuell keine Verbesserungen" in r.text
-    assert "KI-Telefonannahme" not in r.text
+    assert "KI-gestützte Telefonannahme" not in r.text
 
 
 def test_available_is_not_proposed(client):
-    """A fully-answered 'available' area must not produce a suggestion row."""
+    """All 12 'available'+verified ⇒ no-need outcome, no suggestions, no audit CTA."""
     login(client, "owner", "owner123")
     pid = _create_profile(client)
     for area in ("phone", "kitchen", "couriers", "crm", "analytics",
                  "manual_ops", "accounting", "menu_compliance",
                  "pos", "payments", "delivery_platforms", "online_orders"):
         client.post(f"/blueprint/diagnose/{pid}/area/{area}",
-                    data={"status": "available"})
+                    data={"status": "available", "verified": "1",
+                          "quality": "5", "automation": "5"},
+                    follow_redirects=False)
     r = client.get(f"/blueprint/proposal/{pid}")
-    assert "aktuell keine Verbesserungen" in r.text
+    assert "Aktuell kein zusätzlicher Implementierungsbedarf festgestellt" in r.text
 
 
 def test_missing_phone_proposes_ai_phone_reception(client):
     login(client, "owner", "owner123")
     pid = _create_profile(client)
     client.post(f"/blueprint/diagnose/{pid}/area/phone",
-                data={"status": "missing"})
+                data={"status": "missing"},
+                follow_redirects=False)
     r = client.get(f"/blueprint/proposal/{pid}")
     assert r.status_code == 200
-    assert "KI-Telefonannahme" in r.text
-    assert "Hohe Priorität" in r.text
+    assert "KI-gestützte Telefonannahme" in r.text
 
 
 # ---------- Selection + report ----------
@@ -209,7 +211,8 @@ def test_proposal_selection_and_report(client):
     login(client, "owner", "owner123")
     pid = _create_profile(client, name="Druckbar")
     client.post(f"/blueprint/diagnose/{pid}/area/phone",
-                data={"status": "missing"})
+                data={"status": "missing"},
+                follow_redirects=False)
     r = client.post(f"/blueprint/proposal/{pid}/select",
                     data={"selected": "ai_phone_reception",
                           "priority_ai_phone_reception": "high"},
@@ -220,8 +223,8 @@ def test_proposal_selection_and_report(client):
     text = r.text
     assert "Diskussionsgrundlage" in text
     assert "Vertraulich" in text
-    assert "Richtwert Klare KI, nicht Angebot" in text
-    assert "KI-Telefonannahme" in text
+    assert "Richtwert Klare KI" in text and "kein Angebot" in text
+    assert "KI-gestützte Telefonannahme" in text
     assert "Katalog-Version" in text
 
 
@@ -298,10 +301,15 @@ def test_gap_unit_unknown_only():
 
 def test_gap_unit_missing_phone_proposes_high():
     from app.blueprint.gap import analyze
-    result = analyze([{"area_code": "phone", "status": "missing", "verified": 0}])
+    result = analyze([{"area_code": "phone", "status": "missing", "verified": 0,
+                        "quality": None, "automation": None,
+                        "time_loss_min_per_day": None, "notes": "",
+                        "current_tool": ""}])
     titles = [s.improvement.title for s in result.suggestions]
-    assert "KI-Telefonannahme" in titles
-    assert result.suggestions[0].priority == "high"
+    assert "KI-gestützte Telefonannahme" in titles
+    s = result.suggestions[0]
+    assert s.verdict == "required"
+    assert s.confidence == "high"
 
 
 def test_gap_unit_available_not_proposed():

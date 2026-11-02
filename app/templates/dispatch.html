@@ -28,4 +28,56 @@
     </tbody>
   </table>
 </section>
+
+<section class="card">
+  <h2>Fehlgeschlagene Zustellungen</h2>
+  {% if not failed %}
+  <p class="muted">Keine fehlgeschlagenen Zustellungen.</p>
+  {% else %}
+  <p class="small muted">
+    Hier können nicht zugestellte Bestellungen erneut zugewiesen oder endgültig
+    abgebrochen werden. Abbruch bedeutet nicht automatisch Rückerstattung —
+    diese ist separat im Zahlungsvorgang zu veranlassen.
+  </p>
+  <table class="scroll-table-wrapper">
+    <thead>
+      <tr>
+        <th>#</th><th>Kunde</th><th>Adresse</th><th>Grund</th>
+        <th>Erneut zuweisen</th><th>Endgültig abbrechen</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in failed %}
+      <tr>
+        <td>#{{ o.id }} <span class="status-badge status-badge--failed">fehlgeschlagen</span></td>
+        <td>{{ o.customer_name }}</td>
+        <td>{{ o.street }} {{ o.house_number }}, {{ o.plz }} {{ o.city }}</td>
+        <td class="small">
+          {% if o.failure_reason %}{{ o.failure_reason }}{% else %}—{% endif %}
+          {% if o.failed_at %}<br><span class="muted">{{ o.failed_at | datetime_de }}</span>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/dispatch/{{ o.id }}/retry" class="inline">
+            <select name="courier_id" aria-label="Fahrer für Wiederzuweisung">
+              {% for c in couriers %}
+              <option value="{{ c.id }}">{{ c.display_name }}</option>
+              {% endfor %}
+            </select>
+            <button class="primary">Erneut zuweisen</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/dispatch/{{ o.id }}/cancel_failed" class="inline"
+                onsubmit="return confirm('Lieferung #{{ o.id }} endgültig abbrechen? Diese Aktion kann nicht rückgängig gemacht werden.');">
+            <input name="reason" required minlength="3" maxlength="400"
+                   placeholder="Grund (Pflicht)" aria-label="Abbruchgrund">
+            <button class="danger">Abbrechen</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
 {% endblock %}

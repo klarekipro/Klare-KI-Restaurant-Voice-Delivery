@@ -57,6 +57,8 @@
     'delivered': ('ok', 'Lieferung abgeschlossen.'),
     'failed': ('err', 'Zustellung als fehlgeschlagen markiert.'),
     'saved': ('ok', 'Kundendaten gespeichert.'),
+    'retried': ('ok', 'Zustellung erneut zugewiesen.'),
+    'cancelled': ('ok', 'Zustellung endgültig abgebrochen.'),
   } %}
   {% set _f = request.query_params.get('flash') %}
   {% if _f and _f in flash_messages %}

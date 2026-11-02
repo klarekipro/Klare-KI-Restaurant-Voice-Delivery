@@ -12,7 +12,7 @@
   {% if not profiles %}
   <p class="muted">Noch keine Diagnose erfasst. Legen Sie ein Profil für ein befragtes Restaurant an.</p>
   {% else %}
-  <table>
+  <table class="bp-stack">
     <thead>
       <tr>
         <th>Restaurant</th>
@@ -26,16 +26,16 @@
     <tbody>
       {% for p in profiles %}
       <tr>
-        <td><a href="/blueprint/diagnose/{{ p.id }}">{{ p.restaurant_name }}</a></td>
-        <td>{{ p.city or "—" }}</td>
-        <td>
+        <td data-label="Restaurant"><a href="/blueprint/diagnose/{{ p.id }}">{{ p.restaurant_name }}</a></td>
+        <td data-label="Stadt">{{ p.city or "—" }}</td>
+        <td data-label="Status">
           {% if p.status == 'draft' %}<span class="chip">Entwurf</span>
           {% elif p.status == 'review' %}<span class="chip info">In Prüfung</span>
           {% else %}<span class="chip ok">Freigegeben</span>{% endif %}
         </td>
-        <td class="num">{{ p.answered }} / {{ total_areas }}</td>
-        <td>{{ p.created_by_name or "—" }}</td>
-        <td>
+        <td data-label="Bereiche" class="num">{{ p.answered }} / {{ total_areas }}</td>
+        <td data-label="Erfasst von">{{ p.created_by_name or "—" }}</td>
+        <td data-label="Aktion">
           <a href="/blueprint/diagnose/{{ p.id }}" class="link">Öffnen</a> ·
           <a href="/blueprint/proposal/{{ p.id }}" class="link">Vorschlag</a>
         </td>
