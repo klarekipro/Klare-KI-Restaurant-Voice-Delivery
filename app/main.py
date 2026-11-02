@@ -15,11 +15,13 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import auth, db, orders, seed
 from .voice.simulator import SimulatorVoiceProvider
@@ -44,9 +46,17 @@ def session_secret():
 
 
 def report_window(days=1):
+    """Return (start, end) UTC-ISO strings for a window of exactly `days` days
+    ending at the next local midnight (inclusive of today).
+
+    For `days=1` → heute [00:00, morgen 00:00). For `days=7` → letzte 7 Tage
+    (6 vorhergehende Tage + heute).
+    """
     today = datetime.now(ZoneInfo("Europe/Berlin")).date()
-    start = datetime.combine(today - timedelta(days=days-1), datetime.min.time(), ZoneInfo("Europe/Berlin"))
-    end = datetime.combine(today + timedelta(days=1), datetime.min.time(), ZoneInfo("Europe/Berlin"))
+    start = datetime.combine(today - timedelta(days=days - 1),
+                             datetime.min.time(), ZoneInfo("Europe/Berlin"))
+    end = datetime.combine(today + timedelta(days=1),
+                           datetime.min.time(), ZoneInfo("Europe/Berlin"))
     return tuple(t.astimezone(timezone.utc).replace(tzinfo=None).isoformat(" ") for t in (start, end))
 
 
@@ -56,7 +66,88 @@ def _format_cents(cents: int) -> str:
     return f"{euros},{rest:02d} €"
 
 
+STATUS_DE = {
+    "new":             "Neu – zu prüfen",
+    "confirmed":       "Bestätigt",
+    "in_kitchen":      "In Zubereitung",
+    "ready":           "Fertig",
+    "assigned":        "Fahrer zugewiesen",
+    "en_route":        "Unterwegs",
+    "delivered":       "Zugestellt",
+    "closed":          "Abgeschlossen",
+    "failed_delivery": "Zustellung fehlgeschlagen",
+    "rejected":        "Abgelehnt",
+    "cancelled":       "Abgebrochen",
+}
+
+STATUS_CLASS = {
+    "new":             "status-badge--new",
+    "confirmed":       "status-badge--confirmed",
+    "in_kitchen":      "status-badge--in-kitchen",
+    "ready":           "status-badge--ready",
+    "assigned":        "status-badge--assigned",
+    "en_route":        "status-badge--en-route",
+    "delivered":       "status-badge--delivered",
+    "closed":          "status-badge--closed",
+    "failed_delivery": "status-badge--failed",
+    "rejected":        "status-badge--rejected",
+    "cancelled":       "status-badge--cancelled",
+}
+
+
+def _status_de(code: str) -> str:
+    return STATUS_DE.get(code, code)
+
+
+def _status_class(code: str) -> str:
+    return STATUS_CLASS.get(code, "status-badge--cancelled")
+
+
+ROLE_DE = {
+    "owner": "Inhaber:in",
+    "confirmer": "Konfirmierer:in",
+    "kitchen": "Küche",
+    "courier": "Fahrer:in",
+}
+
+
+def _role_de(code: str) -> str:
+    return ROLE_DE.get(code, code)
+
+
+def _datetime_de(value: str) -> str:
+    """Render a stored UTC-ISO timestamp as DD.MM.YYYY HH:MM in Europe/Berlin."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace(" ", "T"))
+    except (TypeError, ValueError):
+        return value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(ZoneInfo("Europe/Berlin"))
+    return local.strftime("%d.%m.%Y %H:%M")
+
+
+def _time_de(value: str) -> str:
+    """Short HH:MM form of a stored timestamp in Europe/Berlin."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace(" ", "T"))
+    except (TypeError, ValueError):
+        return value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Europe/Berlin")).strftime("%H:%M")
+
+
 TEMPLATES.env.filters["cents"] = _format_cents
+TEMPLATES.env.filters["status_de"] = _status_de
+TEMPLATES.env.filters["status_class"] = _status_class
+TEMPLATES.env.filters["role_de"] = _role_de
+TEMPLATES.env.filters["datetime_de"] = _datetime_de
+TEMPLATES.env.filters["time_de"] = _time_de
 
 
 def create_app() -> FastAPI:
@@ -68,7 +159,7 @@ def create_app() -> FastAPI:
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
             if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
-                return Response("cross-origin write denied", status_code=403)
+                return Response("Schreibzugriff von fremder Herkunft verweigert.", status_code=403)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -82,13 +173,78 @@ def create_app() -> FastAPI:
     # Seed is idempotent, safe at startup.
     seed.run()
 
+    def _wants_json(request: Request) -> bool:
+        accept = request.headers.get("accept", "")
+        return "application/json" in accept or request.url.path.startswith("/call/") \
+            or request.url.path.endswith("/reveal_phone")
+
+    def _render_error(request: Request, code: int, title: str, message: str,
+                      detail: str = "", cta_href: str = "/", cta_label: str = "Zur Startseite"):
+        if _wants_json(request):
+            return Response(content=detail or message, status_code=code,
+                            media_type="text/plain; charset=utf-8")
+        return TEMPLATES.TemplateResponse(
+            request, "error.html",
+            ctx(request, title=title, message=message, detail=detail,
+                cta_href=cta_href, cta_label=cta_label),
+            status_code=code,
+        )
+
     @app.exception_handler(orders.StateError)
     def _state_error(request: Request, exc: orders.StateError):
-        return Response(status_code=409, content=str(exc))
+        return _render_error(
+            request, 409,
+            "Statuswechsel nicht möglich",
+            "Die Bestellung ist nicht mehr in dem erwarteten Status. "
+            "Bitte laden Sie die Seite neu.",
+            detail=str(exc),
+        )
 
     @app.exception_handler(sqlite3.IntegrityError)
     def integrity_error(request, exc):
-        return Response("conflicting or invalid data", status_code=409)
+        return _render_error(
+            request, 409,
+            "Daten-Konflikt",
+            "Die Angaben sind unvollständig oder widersprechen bereits gespeicherten Daten.",
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    def http_exception(request: Request, exc: StarletteHTTPException):
+        code = exc.status_code
+        detail = str(exc.detail) if exc.detail else ""
+        if code == 401:
+            if _wants_json(request):
+                return Response("Anmeldung erforderlich.", status_code=401)
+            return RedirectResponse("/login", status_code=303)
+        if code == 403:
+            return _render_error(
+                request, 403, "Kein Zugriff",
+                "Für diesen Bereich fehlt Ihnen die Berechtigung. "
+                "Bitte wenden Sie sich an die Inhaberin oder den Inhaber.",
+                cta_href="/", cta_label="Zurück zur Übersicht",
+            )
+        if code == 404:
+            return _render_error(
+                request, 404, "Seite nicht gefunden",
+                "Die aufgerufene Adresse existiert nicht oder wurde verschoben.",
+                detail=detail,
+            )
+        if code == 400:
+            return _render_error(
+                request, 400, "Ungültige Eingabe",
+                "Die Eingabe konnte nicht verarbeitet werden.",
+                detail=detail,
+            )
+        return _render_error(request, code, "Fehler",
+                             "Ein Fehler ist aufgetreten.", detail=detail)
+
+    @app.exception_handler(RequestValidationError)
+    def validation_error(request: Request, exc: RequestValidationError):
+        return _render_error(
+            request, 400, "Ungültige Eingabe",
+            "Bitte prüfen Sie die eingegebenen Daten.",
+            detail="Formularvalidierung fehlgeschlagen.",
+        )
 
     def ctx(request: Request, **extra) -> dict:
         base = {
@@ -151,7 +307,7 @@ def create_app() -> FastAPI:
                     price_eur: str = Form(...),
                     user: auth.User = Depends(auth.require_strict("owner"))):
         if not name.strip() or len(name) > 120:
-            raise HTTPException(400, "invalid menu name")
+            raise HTTPException(400, "Ungültiger Positionsname.")
         price_cents = _parse_price(price_eur)
         conn = db.connect()
         try:
@@ -200,17 +356,28 @@ def create_app() -> FastAPI:
                        city: str = Form(...),
                        notes: str = Form(""),
                        user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
+        name_v = name.strip()
+        street_v = street.strip()
+        house_v = house_number.strip()
+        plz_v = plz.strip()
+        city_v = city.strip()
+        if not name_v or not street_v or not house_v or not city_v:
+            raise HTTPException(400, "Name, Straße, Hausnummer und Ort sind Pflichtfelder.")
+        if not re.fullmatch(r"\d{5}", plz_v):
+            raise HTTPException(400, "PLZ muss aus 5 Ziffern bestehen.")
+        if len(name_v) > 120 or len(street_v) > 120 or len(city_v) > 80 \
+                or len(house_v) > 20 or len(notes.strip()) > 400:
+            raise HTTPException(400, "Eingabefeld überschreitet die zulässige Länge.")
         conn = db.connect()
         try:
             conn.execute(
                 "UPDATE customers SET name=?, street=?, house_number=?, plz=?, "
                 "city=?, notes=?, updated_at=datetime('now') WHERE id=?",
-                (name.strip(), street.strip(), house_number.strip(),
-                 plz.strip(), city.strip(), notes.strip(), cid),
+                (name_v, street_v, house_v, plz_v, city_v, notes.strip(), cid),
             )
         finally:
             conn.close()
-        return RedirectResponse("/customers", status_code=303)
+        return RedirectResponse("/customers?flash=saved", status_code=303)
 
     # ---------- call simulator (voice entry point) ----------
 
@@ -263,9 +430,9 @@ def create_app() -> FastAPI:
         try:
             payload = await request.json()
         except ValueError:
-            raise HTTPException(400, "invalid JSON")
+            raise HTTPException(400, "Ungültiges JSON-Format.")
         if not isinstance(payload, dict):
-            raise HTTPException(400, "expected object")
+            raise HTTPException(400, "Erwartet wird ein JSON-Objekt.")
         return _submit_call_payload(payload, actor_user_id=user.id, request_key=request.headers.get("Idempotency-Key"))
 
     # ---------- confirmer ----------
@@ -292,7 +459,7 @@ def create_app() -> FastAPI:
                          user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         bundle = orders.fetch_order(order_id)
         if not bundle:
-            raise HTTPException(404, "order not found")
+            raise HTTPException(404, "Bestellung nicht gefunden.")
         conn = db.connect()
         try:
             menu = conn.execute(
@@ -311,7 +478,7 @@ def create_app() -> FastAPI:
         try:
             conn.execute("BEGIN IMMEDIATE")
             if not conn.execute("SELECT 1 FROM order_items WHERE order_id=?", (order_id,)).fetchone():
-                raise HTTPException(400, "cannot approve an empty order")
+                raise HTTPException(400, "Eine leere Bestellung kann nicht bestätigt werden.")
             orders.transition(conn, order_id, "confirmed", actor_user_id=user.id)
             conn.execute(
                 "UPDATE orders SET confirmer_user_id = ? WHERE id = ?",
@@ -333,28 +500,33 @@ def create_app() -> FastAPI:
             raise
         finally:
             conn.close()
-        return RedirectResponse("/confirmer", status_code=303)
+        return RedirectResponse("/confirmer?flash=approved", status_code=303)
 
     @app.post("/confirmer/{order_id}/reject")
     def confirmer_reject(request: Request, order_id: int,
                          reason: str = Form(...),
                          user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
+        reason_v = reason.strip()
+        if not reason_v:
+            raise HTTPException(400, "Grund für die Ablehnung ist erforderlich.")
+        if len(reason_v) > 400:
+            raise HTTPException(400, "Grund ist zu lang (max. 400 Zeichen).")
         conn = db.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "UPDATE orders SET reject_reason = ? WHERE id = ?",
-                (reason.strip(), order_id),
+                (reason_v, order_id),
             )
             orders.transition(conn, order_id, "rejected",
-                              actor_user_id=user.id, detail=reason.strip())
+                              actor_user_id=user.id, detail=reason_v)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
         finally:
             conn.close()
-        return RedirectResponse("/confirmer", status_code=303)
+        return RedirectResponse("/confirmer?flash=rejected", status_code=303)
 
     @app.post("/confirmer/{order_id}/edit_item")
     def confirmer_edit_item(request: Request, order_id: int,
@@ -362,13 +534,13 @@ def create_app() -> FastAPI:
                             qty: int = Form(...),
                             user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         if not 0 <= qty <= 100:
-            raise HTTPException(400, "qty must be >= 0")
+            raise HTTPException(400, "Menge muss ≥ 0 sein.")
         _require_state(order_id, "new")
         conn = db.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute("SELECT status FROM orders WHERE id=?", (order_id,)).fetchone()["status"] != "new":
-                raise HTTPException(409, "order is no longer editable")
+                raise HTTPException(409, "Diese Bestellung kann nicht mehr bearbeitet werden.")
             if qty == 0:
                 conn.execute(
                     "DELETE FROM order_items WHERE id = ? AND order_id = ?",
@@ -396,7 +568,7 @@ def create_app() -> FastAPI:
                            qty: int = Form(1),
                            user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
         if not 1 <= qty <= 100:
-            raise HTTPException(400, "qty must be >= 1")
+            raise HTTPException(400, "Menge muss ≥ 1 sein.")
         _require_state(order_id, "new")
         conn = db.connect()
         try:
@@ -405,10 +577,10 @@ def create_app() -> FastAPI:
                 (menu_item_id,),
             ).fetchone()
             if not row:
-                raise HTTPException(400, "unknown or unavailable menu item")
+                raise HTTPException(400, "Position unbekannt oder nicht verfügbar.")
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute("SELECT status FROM orders WHERE id=?", (order_id,)).fetchone()["status"] != "new":
-                raise HTTPException(409, "order is no longer editable")
+                raise HTTPException(409, "Diese Bestellung kann nicht mehr bearbeitet werden.")
             conn.execute(
                 "INSERT INTO order_items "
                 "(order_id, menu_item_id, name_snapshot, qty, unit_price_cents) "
@@ -463,10 +635,21 @@ def create_app() -> FastAPI:
                       user: auth.User = Depends(auth.require_strict("owner", "kitchen"))):
         conn = db.connect()
         try:
-            orders.transition(conn, order_id, "in_kitchen", actor_user_id=user.id)
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+            if not row:
+                conn.execute("ROLLBACK")
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            if row["status"] != "in_kitchen":
+                orders.transition(conn, order_id, "in_kitchen", actor_user_id=user.id)
+            conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
         finally:
             conn.close()
-        return RedirectResponse("/kitchen", status_code=303)
+        return RedirectResponse("/kitchen?flash=start", status_code=303)
 
     @app.post("/kitchen/{order_id}/ready")
     def kitchen_ready(request: Request, order_id: int,
@@ -474,15 +657,25 @@ def create_app() -> FastAPI:
         conn = db.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            # Allow going confirmed -> ready directly (skip in_kitchen).
             row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
-            if row and row["status"] == "confirmed":
-                orders.transition(conn, order_id, "in_kitchen", actor_user_id=user.id)
-            orders.transition(conn, order_id, "ready", actor_user_id=user.id)
-            conn.execute("COMMIT")
+            if not row:
+                conn.execute("ROLLBACK")
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            current = row["status"]
+            if current == "ready":
+                conn.execute("COMMIT")
+            else:
+                if current == "confirmed":
+                    orders.transition(conn, order_id, "in_kitchen", actor_user_id=user.id)
+                orders.transition(conn, order_id, "ready", actor_user_id=user.id)
+                conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
         finally:
             conn.close()
-        return RedirectResponse("/kitchen", status_code=303)
+        return RedirectResponse("/kitchen?flash=ready", status_code=303)
 
     # ---------- courier dispatch + mobile ----------
 
@@ -517,7 +710,7 @@ def create_app() -> FastAPI:
                 (courier_id,),
             ).fetchone()
             if not crow:
-                raise HTTPException(400, "unknown courier")
+                raise HTTPException(400, "Fahrer unbekannt.")
             conn.execute(
                 "UPDATE orders SET assigned_courier_id = ? WHERE id = ?",
                 (courier_id, order_id),
@@ -530,7 +723,7 @@ def create_app() -> FastAPI:
             raise
         finally:
             conn.close()
-        return RedirectResponse("/dispatch", status_code=303)
+        return RedirectResponse("/dispatch?flash=assigned", status_code=303)
 
     @app.get("/courier", response_class=HTMLResponse)
     def courier_page(request: Request,
@@ -565,14 +758,14 @@ def create_app() -> FastAPI:
                          user: auth.User = Depends(auth.require_strict("owner", "courier"))):
         bundle = orders.fetch_order(order_id)
         if not bundle:
-            raise HTTPException(404, "order not found")
+            raise HTTPException(404, "Bestellung nicht gefunden.")
         if not user.is_owner() and bundle["order"]["assigned_courier_id"] != user.id:
-            raise HTTPException(403, "not your order")
+            raise HTTPException(403, "Diese Bestellung ist nicht Ihnen zugewiesen.")
         nav_url = None
         if bundle["customer"]:
             addr = (
                 f"{bundle['customer']['street']} {bundle['customer']['house_number']}, "
-                f"{bundle['customer']['plz']} {bundle['customer']['city']}"
+                f"{bundle['customer']['plz']} {bundle['customer']['city']}, Deutschland"
             )
             nav_url = f"https://www.google.com/maps/dir/?api=1&destination={quote_plus(addr)}"
         return TEMPLATES.TemplateResponse(request, "courier_delivery.html", ctx(request, bundle=bundle, nav_url=nav_url),
@@ -584,7 +777,18 @@ def create_app() -> FastAPI:
         _ensure_courier_owns(user, order_id)
         conn = db.connect()
         try:
-            orders.transition(conn, order_id, "en_route", actor_user_id=user.id)
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+            if not row:
+                conn.execute("ROLLBACK")
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            if row["status"] != "en_route":
+                orders.transition(conn, order_id, "en_route", actor_user_id=user.id)
+            conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
         finally:
             conn.close()
         return RedirectResponse(f"/courier/{order_id}", status_code=303)
@@ -602,7 +806,7 @@ def create_app() -> FastAPI:
                 (order_id,),
             ).fetchone()
             if not row or not row["phone"]:
-                raise HTTPException(404, "no phone")
+                raise HTTPException(404, "Keine Telefonnummer verfügbar.")
             conn.execute(
                 "INSERT INTO access_log (user_id, action, object_type, object_id, reason) "
                 "VALUES (?, 'reveal_phone', 'order', ?, ?)",
@@ -620,28 +824,47 @@ def create_app() -> FastAPI:
         conn = db.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            orders.transition(conn, order_id, "delivered", actor_user_id=user.id)
-            orders.transition(conn, order_id, "closed", actor_user_id=user.id)
-            conn.execute("COMMIT")
+            row = conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+            if not row:
+                conn.execute("ROLLBACK")
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            current = row["status"]
+            if current == "closed":
+                conn.execute("COMMIT")
+            else:
+                if current != "delivered":
+                    orders.transition(conn, order_id, "delivered", actor_user_id=user.id)
+                orders.transition(conn, order_id, "closed", actor_user_id=user.id)
+                conn.execute("COMMIT")
         except Exception:
-            conn.execute("ROLLBACK")
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
             raise
         finally:
             conn.close()
-        return RedirectResponse("/courier", status_code=303)
+        return RedirectResponse("/courier?flash=delivered", status_code=303)
 
     @app.post("/courier/{order_id}/failed")
     def courier_failed(request: Request, order_id: int,
                        reason: str = Form(...),
                        user: auth.User = Depends(auth.require_strict("owner", "courier"))):
         _ensure_courier_owns(user, order_id)
+        reason_v = reason.strip()
+        if not reason_v:
+            raise HTTPException(400, "Grund ist erforderlich.")
         conn = db.connect()
         try:
+            conn.execute("BEGIN IMMEDIATE")
             orders.transition(conn, order_id, "failed_delivery",
-                              actor_user_id=user.id, detail=reason.strip()[:160])
+                              actor_user_id=user.id, detail=reason_v[:160])
+            conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
         finally:
             conn.close()
-        return RedirectResponse("/courier", status_code=303)
+        return RedirectResponse("/courier?flash=failed", status_code=303)
 
     # ---------- dashboard ----------
 
@@ -662,6 +885,21 @@ def create_app() -> FastAPI:
                 f"WHERE {where_ready} "
             ).fetchone()["n"]
 
+            kitchen_stats = conn.execute(
+                "SELECT "
+                "  SUM(CASE WHEN o.confirmed_at IS NOT NULL AND o.ready_at IS NOT NULL "
+                "           THEN (strftime('%s', o.ready_at) - strftime('%s', o.confirmed_at)) END) AS prep_seconds, "
+                "  COUNT(CASE WHEN o.confirmed_at IS NOT NULL AND o.ready_at IS NOT NULL THEN 1 END) AS prep_count, "
+                "  COALESCE((SELECT SUM(oi.qty) FROM order_items oi JOIN orders o2 ON oi.order_id=o2.id "
+               f"            WHERE o2.ready_at >= '{start}' AND o2.ready_at < '{end}'), 0) AS items_prepared "
+                "FROM orders o "
+               f"WHERE o.ready_at >= '{start}' AND o.ready_at < '{end}'"
+            ).fetchone()
+            prep_count = kitchen_stats["prep_count"] or 0
+            avg_prep_s = int((kitchen_stats["prep_seconds"] or 0) / prep_count) if prep_count else 0
+            avg_prep_min = round(avg_prep_s / 60, 1)
+            items_prepared = kitchen_stats["items_prepared"] or 0
+
             per_courier = conn.execute(
                 "SELECT u.id, u.display_name, "
                 "       COUNT(o.id) AS delivered_count, "
@@ -670,7 +908,7 @@ def create_app() -> FastAPI:
                 "LEFT JOIN orders o ON o.assigned_courier_id = u.id "
                 "   AND o.status IN ('delivered','closed') "
                 f"  AND {where_delivered} "
-                "WHERE u.role = 'courier' "
+                "WHERE u.role = 'courier' AND u.active = 1 "
                 "GROUP BY u.id, u.display_name "
                 "ORDER BY delivered_count DESC, u.display_name"
             ).fetchall()
@@ -679,8 +917,8 @@ def create_app() -> FastAPI:
                 f"SELECT "
                 f"  COUNT(*) AS orders_count, "
                 f"  COALESCE(SUM(CASE WHEN status IN ('delivered','closed') THEN total_cents END), 0) AS gross_delivered, "
-                f"  COALESCE(SUM(CASE WHEN status NOT IN ('rejected','cancelled') THEN total_cents END), 0) AS gross_active, "
-                f"  SUM(CASE WHEN status IN ('rejected','cancelled') THEN 1 ELSE 0 END) AS cancel_count, "
+                f"  COALESCE(SUM(CASE WHEN status NOT IN ('rejected','cancelled','failed_delivery') THEN total_cents END), 0) AS gross_active, "
+                f"  SUM(CASE WHEN status IN ('rejected','cancelled','failed_delivery') THEN 1 ELSE 0 END) AS cancel_count, "
                 f"  SUM(CASE WHEN source = 'voice' THEN 1 ELSE 0 END) AS voice_count "
                 f"FROM orders WHERE {where}"
             ).fetchone()
@@ -688,7 +926,7 @@ def create_app() -> FastAPI:
             delivered = conn.execute(f"SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) gross FROM orders WHERE status IN ('delivered','closed') AND {where_delivered}").fetchone()
             totals["gross_delivered"] = delivered["gross"]
             orders_count = totals["orders_count"] or 0
-            avg_ticket = totals["gross_delivered"] // max(1, delivered["n"])
+            avg_ticket = (totals["gross_delivered"] // delivered["n"]) if delivered["n"] else None
             cancel_rate = (
                 round(100.0 * (totals["cancel_count"] or 0) / orders_count, 1)
                 if orders_count else 0.0
@@ -706,6 +944,8 @@ def create_app() -> FastAPI:
                 request,
                 range_=range_,
                 prepared=prepared,
+                avg_prep_min=avg_prep_min,
+                items_prepared=items_prepared,
                 per_courier=per_courier,
                 totals=totals,
                 avg_ticket=avg_ticket,
@@ -725,9 +965,9 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
         if not row:
-            raise HTTPException(404, "order not found")
+            raise HTTPException(404, "Bestellung nicht gefunden.")
         if row["status"] != expected:
-            raise HTTPException(409, f"order status is {row['status']}, expected {expected}")
+            raise HTTPException(409, f"Status ist '{_status_de(row['status'])}', erwartet '{_status_de(expected)}'.")
 
     def _ensure_courier_owns(user: auth.User, order_id: int) -> None:
         if user.is_owner():
@@ -740,11 +980,11 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
         if not row or row["assigned_courier_id"] != user.id:
-            raise HTTPException(403, "not your order")
+            raise HTTPException(403, "Diese Bestellung ist nicht Ihnen zugewiesen.")
 
     def _submit_call_payload(payload: dict, actor_user_id: int, request_key=None) -> dict:
         if not isinstance(payload.get("address"), dict) or not isinstance(payload.get("items"), list):
-            raise HTTPException(400, "invalid address or items")
+            raise HTTPException(400, "Adresse oder Positionen fehlen.")
         phone = _normalize_phone(str(payload.get("phone", "")).strip())
         name = str(payload.get("name", "")).strip()
         address = payload.get("address") or {}
@@ -756,20 +996,20 @@ def create_app() -> FastAPI:
         items = payload.get("items") or []
 
         if not phone or not name or not street or not house_number or not plz or not city:
-            raise HTTPException(400, "missing caller/address fields")
+            raise HTTPException(400, "Anrufer- oder Adressdaten unvollständig.")
         if not re.fullmatch(r"\d{5}", plz):
-            raise HTTPException(400, "PLZ must be 5 digits")
+            raise HTTPException(400, "PLZ muss aus 5 Ziffern bestehen.")
         if not items:
-            raise HTTPException(400, "cannot submit an empty order")
+            raise HTTPException(400, "Leere Bestellung kann nicht übermittelt werden.")
 
         if not re.fullmatch(r"\+[1-9]\d{6,14}", phone):
-            raise HTTPException(400, "invalid phone")
+            raise HTTPException(400, "Telefonnummer ist ungültig.")
         for item in items:
             if not isinstance(item, dict) or type(item.get("menu_item_id")) is not int or type(item.get("qty")) is not int or not 1 <= item["qty"] <= 100:
-                raise HTTPException(400, "invalid item or quantity (1–100)")
+                raise HTTPException(400, "Position oder Menge ungültig (erlaubt: 1–100).")
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         if request_key and not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", request_key):
-            raise HTTPException(400, "invalid idempotency key")
+            raise HTTPException(400, "Idempotenz-Schlüssel ungültig.")
         call_meta = VOICE.start_call(phone)
 
         conn = db.connect()
@@ -779,7 +1019,7 @@ def create_app() -> FastAPI:
                 previous = conn.execute("SELECT * FROM submissions WHERE request_key=? AND actor=?", (request_key, actor_user_id)).fetchone()
                 if previous:
                     if previous["digest"] != digest:
-                        raise HTTPException(409, "idempotency key reused with changed payload")
+                        raise HTTPException(409, "Idempotenz-Schlüssel wurde mit anderen Daten erneut verwendet.")
                     conn.execute("COMMIT")
                     return json.loads(previous["result"])
             row = conn.execute(
@@ -788,11 +1028,27 @@ def create_app() -> FastAPI:
             if row:
                 customer_id = row["id"]
                 crm_match = "matched" if row["trusted"] else "unmatched"
+                changed_fields = [
+                    f for f, old, new in (
+                        ("name", row["name"], name),
+                        ("street", row["street"], street),
+                        ("house_number", row["house_number"], house_number),
+                        ("plz", row["plz"], plz),
+                        ("city", row["city"], city),
+                    ) if (old or "") != (new or "")
+                ]
                 conn.execute(
                     "UPDATE customers SET name=?, street=?, house_number=?, plz=?, "
                     "city=?, notes=?, updated_at=datetime('now') WHERE id=?",
                     (name, street, house_number, plz, city, delivery_notes, customer_id),
                 )
+                if changed_fields:
+                    conn.execute(
+                        "INSERT INTO access_log (user_id, action, object_type, object_id, reason) "
+                        "VALUES (?, 'customer.updated', 'customer', ?, ?)",
+                        (actor_user_id, str(customer_id),
+                         "voice_submit:" + ",".join(changed_fields))
+                    )
             else:
                 cur = conn.execute(
                     "INSERT INTO customers (phone, name, street, house_number, plz, city, notes) "
@@ -816,14 +1072,14 @@ def create_app() -> FastAPI:
                 mid = int(it.get("menu_item_id"))
                 qty = int(it.get("qty", 1))
                 if not 1 <= qty <= 100:
-                    raise HTTPException(400, "invalid quantity")
+                    raise HTTPException(400, "Ungültige Menge.")
                 m = conn.execute(
                     "SELECT id, name, price_cents FROM menu_items "
                     "WHERE id = ? AND available = 1",
                     (mid,),
                 ).fetchone()
                 if not m:
-                    raise HTTPException(400, "unknown or unavailable item")
+                    raise HTTPException(400, "Position unbekannt oder nicht verfügbar.")
                 conn.execute(
                     "INSERT INTO order_items "
                     "(order_id, menu_item_id, name_snapshot, qty, unit_price_cents) "
@@ -873,7 +1129,7 @@ _PRICE_RE = re.compile(r"^\s*(\d+)(?:[.,](\d{1,2}))?\s*€?\s*$")
 def _parse_price(raw: str) -> int:
     m = _PRICE_RE.match(raw or "")
     if not m:
-        raise HTTPException(400, "invalid price")
+        raise HTTPException(400, "Preis ungültig. Bitte Format 9,90 verwenden.")
     euros = int(m.group(1))
     cents_part = m.group(2) or "0"
     cents_part = (cents_part + "00")[:2]

@@ -87,7 +87,12 @@ Deckt ab:
 - Rejected-Pfad verhindert Kitchen-Progression (HTTP 409).
 - Persistenz über Prozess-Neustart (gleicher DB-Pfad).
 
-Testlauf-Status: **5 passed** (Stand des letzten Commits).
+Testlauf-Status: **33 passed** (demo-release Milestone, inkl. 11 neuer
+Regressionstests in `tests/test_demo_release.py`).
+
+Zusätzlich: `PYTHONPATH=. .venv/bin/python scripts/smoke_e2e.py` prüft 28
+End-to-End-Schritte über alle 12 Demo-Flows (vollständiger Rundgang im
+Vorführformat siehe `docs/DEMO.md`).
 
 ## Voice-Integration — ehrliche Abgrenzung
 

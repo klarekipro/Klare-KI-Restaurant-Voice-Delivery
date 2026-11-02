@@ -4,7 +4,7 @@
 <section class="card">
   <div class="row space">
     <h1>Bestellung #{{ bundle.order.id }}</h1>
-    <span class="chip">{{ bundle.order.status }}</span>
+    <span class="status-badge status-badge--lg {{ bundle.order.status | status_class }}">{{ bundle.order.status | status_de }}</span>
   </div>
   <p class="muted">Call-ID: <span class="mono">{{ bundle.order.call_id }}</span> ·
      Quelle: {{ bundle.order.source }} ·
@@ -83,7 +83,7 @@
       <h2>Verlauf</h2>
       <ol class="log">
         {% for e in bundle['events'] %}
-        <li><span class="mono">{{ e.occurred_at }}</span> — {{ e.event }}
+        <li><span class="mono">{{ e.occurred_at | datetime_de }}</span> — {{ e.event }}
           {% if e.detail %}<em>({{ e.detail }})</em>{% endif %}</li>
         {% endfor %}
       </ol>

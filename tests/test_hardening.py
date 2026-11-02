@@ -41,7 +41,8 @@ def test_empty_approval_and_duplicate_transition(client):
     assert client.post(f'/confirmer/{oid}/approve').status_code==200 # redirect to queue
     assert client.post(f'/confirmer/{oid}/approve').status_code==409
     assert client.post(f'/kitchen/{oid}/ready').status_code==200
-    assert client.post(f'/kitchen/{oid}/ready').status_code==409
+    # Doppelklick auf "Fertig" ist idempotent (keine 409-Fehlerseite für Küche).
+    assert client.post(f'/kitchen/{oid}/ready').status_code==200
     oid=client.post('/call/submit',json=payload()).json()['order_id']
     with db.connect() as c: c.execute('DELETE FROM order_items WHERE order_id=?',(oid,))
     assert client.post(f'/confirmer/{oid}/approve').status_code==400
@@ -56,7 +57,11 @@ def test_cross_origin_and_bad_json(client):
 
 @pytest.mark.parametrize('path', ['/confirmer/1/approve','/kitchen/1/ready','/dispatch/1/assign','/courier/1/start','/courier/1/delivered','/courier/1/reveal_phone'])
 def test_anonymous_actions(client,path):
-    assert client.post(path,data={'courier_id':4}).status_code==401
+    r = client.post(path, data={'courier_id':4}, follow_redirects=False)
+    # Anonyme Zugriffe werden zur Login-Seite umgeleitet (303) oder mit 401 abgewiesen.
+    assert r.status_code in (303, 401)
+    if r.status_code == 303:
+        assert r.headers['location'] == '/login'
 
 
 def test_other_courier_denied(client):
@@ -91,4 +96,7 @@ def test_old_public_key_no_longer_signs_sessions(client):
     from itsdangerous import TimestampSigner
     token=TimestampSigner('dev-only-secret-change-me-in-every-non-local-environment').sign(base64.b64encode(json.dumps({'uid':1}).encode())).decode()
     client.cookies.set('session',token)
-    assert client.get('/dashboard').status_code==401
+    r = client.get('/dashboard', follow_redirects=False)
+    assert r.status_code in (303, 401)
+    if r.status_code == 303:
+        assert r.headers['location'] == '/login'
