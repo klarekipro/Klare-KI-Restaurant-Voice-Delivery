@@ -1,0 +1,6 @@
+{% set bp_path = request.url.path %}
+<nav class="bp-subnav" aria-label="Blueprint-Modi">
+  <a href="/blueprint" class="bp-tab {% if bp_path == '/blueprint' %}bp-tab--active{% endif %}">Übersicht</a>
+  <a href="/blueprint/demo" class="bp-tab {% if bp_path.startswith('/blueprint/demo') %}bp-tab--active{% endif %}">Demo</a>
+  <a href="/blueprint/diagnose" class="bp-tab {% if bp_path.startswith('/blueprint/diagnose') %}bp-tab--active{% endif %}">Diagnose</a>
+</nav>

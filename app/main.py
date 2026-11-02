@@ -24,6 +24,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import auth, db, orders, seed
+from .blueprint import router as blueprint_router
 from .voice.simulator import SimulatorVoiceProvider
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -172,6 +173,7 @@ def create_app() -> FastAPI:
     db.init_db()
     # Seed is idempotent, safe at startup.
     seed.run()
+    app.include_router(blueprint_router)
 
     def _wants_json(request: Request) -> bool:
         accept = request.headers.get("accept", "")

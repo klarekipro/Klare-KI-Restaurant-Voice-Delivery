@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Blueprint — Demo{% endblock %}
+{% block content %}
+{% include "blueprint/_subnav.html" %}
+
+<section class="card">
+  <h1>Demo · Referenz-Restaurant</h1>
+  <p class="muted">
+    Pizzeria <em>Bella Vita</em>, Berlin — ein fiktives Lieferrestaurant.
+    Diese Demo-Daten sind vorinstalliert und werden beim Start erzeugt.
+    Die Oberflächen sind dieselben, die später für den Betrieb produktiv wären.
+  </p>
+
+  <div class="disclosure">
+    <strong>Hinweis:</strong> Der Call Simulator ist ein manuelles
+    Simulations-Werkzeug für Demo-Zwecke. Es findet weder echte Spracherkennung
+    noch Telefonie statt.
+  </div>
+
+  <h2>Prozessfluss</h2>
+  <ol class="plain">
+    <li><strong>1. Anruf</strong> — eine Bestellung geht am Simulator ein
+      (<a href="/call">Call Simulator öffnen</a>).</li>
+    <li><strong>2. Freigabe</strong> — die Konfirmierenden prüfen und bestätigen
+      (<a href="/confirmer">Konfirmierer</a>).</li>
+    <li><strong>3. Küche</strong> — Zubereitung mit Zeitmessung
+      (<a href="/kitchen">Küchenanzeige</a>).</li>
+    <li><strong>4. Fahrer</strong> — Zuweisung und Zustellung
+      (<a href="/dispatch">Dispatch</a> und <a href="/courier">Fahrer</a>).</li>
+    <li><strong>5. Analytik</strong> — tägliche Übersicht
+      (<a href="/dashboard">Dashboard</a>).</li>
+  </ol>
+</section>
+
+<section class="card">
+  <h2>Was dieser Blueprint zeigt</h2>
+  <ul class="shelf">
+    <li>Ein einheitliches Datenmodell für Bestellung, Küche, Zustellung.</li>
+    <li>Rollen und Berechtigungen (Inhaber:in, Konfirmierer:in, Küche, Fahrer:in).</li>
+    <li>Deutsche Oberfläche, Zeitzone Europa/Berlin, Status in Klartext.</li>
+    <li>Lokale Speicherung (SQLite), keine Cloud-Pflicht.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Katalog der möglichen Verbesserungs-Module</h2>
+  <p class="muted">
+    Dies sind Diskussionsgrundlagen. Keine Zusage, dass ein konkretes System
+    bei einem konkreten Betrieb integrierbar ist. Die Diagnose entscheidet,
+    welche Module tatsächlich zum Betrieb passen.
+  </p>
+  <div class="grid-2">
+    {% for i in improvements %}
+    <div class="card">
+      <h3>{{ i.title }}</h3>
+      <p class="small muted">{{ i.problem }}</p>
+      <p class="small">{{ i.proposal }}</p>
+      <p class="small muted">
+        Komplexität: <strong>{{ i.complexity }}</strong> ·
+        Richtwert: <strong>{{ i.budget_eur_from }} – {{ i.budget_eur_to }} €</strong>
+        (unverbindliche Spanne).
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
