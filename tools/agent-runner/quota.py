@@ -53,7 +53,7 @@ def retry_time(data, now):
 
 def code_hash():
     root=Path(__file__).parent
-    return hashlib.sha256(b''.join((root/name).read_bytes() for name in ('runner.py','quota.py','scheduler.py','check_simulator.cjs'))).hexdigest()
+    return hashlib.sha256(b''.join((root/name).read_bytes() for name in ('runner.py','quota.py','scheduler.py','check_simulator.cjs','deferred.py','execution.py'))).hexdigest()
 
 def scope_hash(d,started):
     return hashlib.sha256(json.dumps({'definition':d,'started':started},sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -183,6 +183,9 @@ def tick(engine, now=None):
             engine.c.execute('INSERT INTO probe_attempts VALUES(?)',(a,))
             try:
                 with tempfile.TemporaryDirectory(prefix='runner-quota-probe-') as tmp:
+                    engine.provider.mission_deadline=row['started']+d.get('max_seconds',600)
+                    engine.provider.artifact_dir=engine.s.path.parent/'attempts'/str(a)
+                    engine.provider.heartbeat=lambda data:engine.s.event(m,'process_activity',json.dumps(dict(attempt=a,**data)))
                     engine.provider.on_start=lambda pid:engine.c.execute('UPDATE attempts SET pid=? WHERE id=?',(pid,a))
                     engine.provider.control=lambda:bool(engine.c.execute("SELECT paused OR state IN ('CANCELLED','STOPPED') FROM missions WHERE id=?",(m,)).fetchone()[0])
                     remaining=d.get('max_seconds',600)-(time.time()-row['started'])

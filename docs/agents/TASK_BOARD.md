@@ -19,3 +19,10 @@ Remaining: real reverse-provider CLI demonstration when Claude capacity permits;
 
 Mission 06 complete: persistent WAITING_QUOTA, bounded availability checks, unattended one-shot resume, operator controls and validated launchd configuration. Controlled quota/time + three real Codex CLI requests completed without copying messages or repeating work. 63 runner and 22 restaurant tests pass.
 Pending: separately approved LaunchAgent activation and real login/sleep/wake verification; live provider-reset observation when naturally available; browser/mobile acceptance. Do not silently enroll old holds, reset budgets or activate persistence.
+
+Mission 09 complete for review: separate invocation/mission deadlines, durable streams and heartbeat,
+verified process-group shutdown, opt-in externally validated timeout checkpoints, bounded retry/handoff,
+92 passing tests and real isolated Claude→Codex→Claude recovery. Implementation: 5aa4a88.
+Original night mission 86907825eb6d and failed synthetic fixture 764e24a6287d remain held.
+Remaining: independent PR review; separately scoped active-runner rollout/recovery decision; sustained endurance
+and detached-process scrutiny. No automatic merge, production, scheduler change or old-hold approval.

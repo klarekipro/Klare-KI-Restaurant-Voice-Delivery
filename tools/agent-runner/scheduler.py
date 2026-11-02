@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import quota
+import deferred
 
 LABEL='com.klareki.agent-runner'
 INTERVAL=300
@@ -28,7 +29,7 @@ def tick(engine,now=None):
                 if inflight['state'] not in ('WAITING_APPROVAL','CANCELLED','STOPPED','COMPLETED','FAILED'):
                     engine.s.hold(inflight['mission'],'unknown in-flight execution after worker restart; inspect before scheduling')
                 engine.s.event(None,'scheduler_unknown_inflight',str(inflight['id']));return False
-            quota.tick(engine,now)
+            if not deferred.tick(engine):quota.tick(engine,now)
             engine.s.event(None,'scheduler_idle','tick completed')
     except engine.Hold as exc:
         engine.s.event(None,'scheduler_busy_or_hold',str(exc));return False
@@ -44,7 +45,7 @@ def command(engine,args,script):
             if signal:wait['next_check']=max(wait['next_check'],signal[0])
         if action=='next-check':
             waits=[{k:x[k] for k in ('mission','task','provider','next_check','checks','provider_state')} for x in waits]
-        print(json.dumps({'waiting':waits,'providers':[dict(x) for x in engine.c.execute('SELECT * FROM quota_signals')],'missions':[dict(x) for x in engine.c.execute("SELECT id,state,paused,EXISTS(SELECT 1 FROM quota_authorizations a WHERE a.mission=missions.id) AS auto_resume_authorized FROM missions")]},indent=2));return
+        print(json.dumps({'scheduled':deferred.pending(engine),'waiting':waits,'providers':[dict(x) for x in engine.c.execute('SELECT * FROM quota_signals')],'missions':[dict(x) for x in engine.c.execute("SELECT id,state,paused,EXISTS(SELECT 1 FROM quota_authorizations a WHERE a.mission=missions.id) AS auto_resume_authorized FROM missions")]},indent=2));return
     if action=='tick':
         tick(engine);return
     generated=root/'launchagent.plist';target=Path.home()/'Library/LaunchAgents'/f'{LABEL}.plist'
@@ -68,7 +69,7 @@ def command(engine,args,script):
     domain=f'gui/{os.getuid()}';job=f'{domain}/{LABEL}'
     if action=='status':
         result=subprocess.run(['launchctl','print',job],capture_output=True,text=True) if sys.platform=='darwin' else None
-        print(json.dumps({'installed':target.exists(),'loaded':bool(result and result.returncode==0),'label':LABEL,'state':str(state),'generated':str(generated),'logs':str(root/'logs'),'waiting_missions':engine.c.execute("SELECT COUNT(*) FROM missions WHERE state='WAITING_QUOTA'").fetchone()[0]},indent=2));return
+        print(json.dumps({'installed':target.exists(),'loaded':bool(result and result.returncode==0),'label':LABEL,'state':str(state),'generated':str(generated),'logs':str(root/'logs'),'scheduled_missions':deferred.pending(engine),'waiting_missions':engine.c.execute("SELECT COUNT(*) FROM missions WHERE state='WAITING_QUOTA'").fetchone()[0]},indent=2));return
     if action not in ('install','enable','disable','uninstall'): raise engine.Hold('unknown scheduler command')
     if sys.platform!='darwin' or os.getuid()==0: raise engine.Hold('scheduler activation requires a non-root macOS user')
     if not args.authorize_activation: raise engine.Hold('separate explicit --authorize-activation NOTE required; development does not authorize persistence')

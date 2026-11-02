@@ -100,3 +100,81 @@ python3 tools/agent-runner/demo_quota.py run --state .agent-runner/demo-new/stat
 This uses a new private store, controlled synthetic 429/reset metadata and simulated eligibility time, then starts a separate one-shot worker with **real Codex CLI** availability/work/review requests plus external checks. It does not install launchd, exhaust real quota, alter the system clock or claim live reset detection. A duplicate worker verifies that completed work is not repeated. See `outputs/codex/mission-06/VALIDATION.md` for measured coverage.
 
 Teardown uses the last reviewed installed bytes, so a changed terminal PATH does not prevent disable/uninstall. Uninstall refuses to remove the configuration while launchctl still reports the job loaded. Activation still requires a freshly reviewed exact configuration.
+
+
+## Deferred enrollment (minimal Mission 08 extension)
+
+`enqueue <mission-file> --not-before <timezone-aware ISO timestamp>` registers a mission/worktree in SQLite without calling any provider. This is a scheduling gate, not WAITING_QUOTA and not a quota reset claim. Scheduler status and quota next-check show pending scheduled work. The original duration starts at enrollment and includes the delay; no budgets are reset. A future Engine.step/resume cannot bypass not-before. After the time gate, normal provider selection and real quota handling apply. Pauses, holds, scope/code/branch changes, unknown work and expired budgets still prevent dispatch. The same writer lock and private SQLite store are used; no second runner/service is installed.
+
+## Invocation deadlines and timeout recovery (Mission 09)
+
+`invocation_seconds` bounds one work/review call (default 900 seconds). Existing
+`max_seconds` bounds the whole mission (default 600 seconds), including enrollment,
+waiting, checks, preflight and probes. A call gets the smaller remaining budget;
+there is no budget reset. Set both explicitly for long work, for example:
+
+```json
+{
+  "invocation_seconds": 1200,
+  "max_seconds": 7200,
+  "timeout_recovery": "hold"
+}
+```
+
+This is an option fragment, not a complete mission definition. Probes retain their
+separate maximum of 45 seconds. Preflight probes are bounded at 20 seconds and the
+credential lookup at 10 seconds. After preflight the mission deadline is checked
+again. Process shutdown may add up to six seconds beyond the work deadline; that
+is cleanup, never permission for more provider work. No idle-output timeout is
+used: silence and heartbeats do not establish useful model progress.
+
+Claude uses `stream-json --verbose --include-partial-messages`; Codex retains its
+JSON event stream. Private `.agent-runner/attempts/<id>/` holds stdout, stderr and
+process termination metadata even when scratch/session directories disappear.
+SQLite `process_activity` events every 15 seconds record elapsed time and output
+byte counts, without copying model content into status events. Raw streams may
+contain sensitive task content: do not publish them without inspection.
+
+A deadline is an incomplete execution outcome, **never a quota signal**. The
+runner terminates the process group (TERM, then KILL), reaps its leader and checks
+both recorded PID and group before checkpoint validation or approval. A surviving
+group, interruption without a durable outcome, scope/secret/symlink violation,
+changed fingerprint or failed check holds for inspection. Output files and the
+worktree remain available. Uncertain actions are not replayed.
+
+The default `timeout_recovery: "hold"` preserves and externally validates a safe
+checkpoint, then holds before committing or scheduling another call. To authorize
+bounded continuation, a **trusted operator** may set `timeout_recovery:
+"checkpoint"` on a new mission whose actions are restricted to local, repeat-safe
+file work with no external side effects. Do not enable it for ambiguous actions,
+messages, purchases, publication or remote mutations. Nonempty `checkpoint_checks`
+(or `checks`) are mandatory. Validation is only evidence for the named checks;
+use functional checks for application work, not just `compile`.
+
+An authorized timeout checkpoint uses the existing content-bound, restart-safe
+commit/handoff flow. It increments the original task retry count and preserves
+mission duration, invocation and consecutive-failure caps. `fallback` selects the
+other available provider; without it the same provider can continue. Review
+fallback additionally requires `review_fallback`. Fresh review and completion
+checks remain mandatory. No provider is marked unavailable merely for timing out.
+
+Existing held missions are **not migrated, approved or re-enrolled**. Upgrading
+runner code invalidates previous unattended code authorizations as before. Inspect
+the original process and files before any separate recovery decision. Process-group
+checks cover normal CLI descendants; deliberately detached/untracked processes and
+external side effects require operator inspection, not a claim of exactly-once work.
+
+Bounded real demonstrations (new private directory required):
+
+```
+python3 tools/agent-runner/demo_timeout.py --directory .agent-runner/timeout-demo-new
+python3 tools/agent-runner/demo_timeout.py --directory .agent-runner/recovery-demo-new --recovery
+```
+
+The first makes three tool-free real requests: forced Claude timeout, Claude
+answer, Codex answer (420-second overall cap). The second makes at most three real
+requests within 300 seconds: forced Claude timeout, externally checked synthetic
+checkpoint, Codex continuation and Claude review, then a duplicate-drive check.
+Both use isolated synthetic repositories, existing authentication and the unchanged
+sandboxes; neither touches the night mission, scheduler installation or production.
+The timeout is deliberately injected, not a real provider hang or quota exhaustion.
