@@ -2,6 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Klare KI · Diskussionsgrundlage · {{ profile.restaurant_name }}</title>
 <link rel="stylesheet" href="/static/style.css">
 <style>
@@ -17,13 +18,36 @@
            padding: 0.3rem 0.5rem; font-size: 0.85rem; margin: 0.3rem 0; }
   .footer-note { margin-top: 2rem; padding: 0.75rem 1rem; border: 1px dashed var(--border);
                  font-size: 0.85rem; color: var(--mut); }
+  .no-need {
+    background: #e8f7ee; border: 1px solid #b4e3c3; color: #0a5a24;
+    padding: 1rem 1.25rem; border-radius: 8px; margin: 1rem 0;
+  }
+  .insufficient {
+    background: #fff3cd; border: 1px solid #ffeaa7; color: #7a4a00;
+    padding: 1rem 1.25rem; border-radius: 8px; margin: 1rem 0;
+  }
+  .evidence-list { margin: 0.25rem 0 0.5rem 1.2rem; padding: 0; }
+  .evidence-list li { padding: 0.1rem 0; font-size: 0.9rem; }
   .status-badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .chip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Mobile — Scroll-Container for the Ist-Zustand table (D09). Print layout
+     resets mobile overrides below. */
+  @media screen and (max-width: 640px) {
+    .report-container { padding: 0 0.75rem; }
+    .scroll-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .scroll-table-wrapper table { min-width: 540px; }
+    .improvement { padding: 0.6rem 0.75rem; }
+    body { font-size: 14px; }
+  }
+
   @media print {
     @page { margin: 18mm 15mm 22mm 15mm; }
     .no-print { display: none !important; }
     body { font-size: 11pt; }
     .improvement, .section { break-inside: avoid; page-break-inside: avoid; }
+    .scroll-table-wrapper { overflow: visible !important; }
+    .scroll-table-wrapper table { min-width: 0 !important; }
   }
 </style>
 </head>
@@ -51,8 +75,37 @@
   </p>
 </header>
 
+{% if outcome == 'no_need' %}
+<div class="no-need section">
+  <h2 style="margin-top:0">Aktuell kein zusätzlicher Implementierungsbedarf festgestellt</h2>
+  <p>
+    Alle 12 Bereiche wurden beantwortet. Für keinen Bereich liegt ein
+    konkreter, treibender Hinweis vor, der ein Katalog-Modul rechtfertigt.
+    Entsprechend wird <strong>weder ein kostenpflichtiges Audit noch ein
+    verbindliches Angebot vorgeschlagen</strong>.
+  </p>
+  {% if result.verify_recommended %}
+  <p>
+    Optional, nicht erforderlich: eine technische Verifikation der als
+    „bereits vorhanden" markierten Bereiche
+    ({{ result.verify_recommended | join(', ') }}).
+  </p>
+  {% endif %}
+</div>
+{% elif outcome == 'insufficient' %}
+<div class="insufficient section">
+  <h2 style="margin-top:0">Diagnose unvollständig — nicht entscheidungsreif</h2>
+  <p>
+    Mindestens ein Kernbereich (POS, Zahlung, Telefonie oder Küche) ist bisher
+    nicht entschieden beantwortet. Ein verbindliches Fazit kann daher nicht
+    gezogen werden. Die folgenden Abschnitte sind Zwischenstand.
+  </p>
+</div>
+{% endif %}
+
 <section class="section">
   <h2>1 · Zusammenfassung Ist-Zustand</h2>
+  <div class="scroll-table-wrapper">
   <table>
     <thead>
       <tr><th>Bereich</th><th>Status</th><th>Werkzeug</th><th>Quelle</th></tr>
@@ -79,12 +132,14 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 
 {% if result.to_clarify %}
 <section class="section">
-  <h2>2 · Zunächst klären</h2>
-  <p class="small">Diese Bereiche sind <em>nicht</em> als Lücken gewertet. Sie werden im nächsten Gespräch gemeinsam geprüft.</p>
+  <h2>Zunächst klären</h2>
+  <p class="small">Diese Bereiche sind <em>nicht</em> als Lücken gewertet.
+     Sie werden im nächsten Gespräch gemeinsam geprüft.</p>
   <ul>
     {% for code in result.to_clarify %}
       {% set area = areas | selectattr("code","equalto",code) | first %}
@@ -94,25 +149,44 @@
 </section>
 {% endif %}
 
+{% if outcome != 'no_need' %}
 <section class="section">
-  <h2>{% if result.to_clarify %}3{% else %}2{% endif %} · Ausgewählte Verbesserungen</h2>
+  <h2>Ausgewählte Verbesserungen</h2>
   {% if not chosen %}
     <p>Es wurden keine Verbesserungen zur Besprechung ausgewählt.</p>
   {% else %}
     {% for s in chosen %}
+    {% set prio = display_priority.get(s.improvement.code, 'medium') %}
     <div class="improvement">
       <h3>{{ s.improvement.title }}</h3>
       <p class="small muted">
-        {{ selected[s.improvement.code].priority | bp_priority_de }} ·
+        Priorität (Vorschlag, keine Dringlichkeitsbewertung):
+        <strong>{{ prio | bp_priority_de }}</strong> ·
         Komplexität: {{ s.improvement.complexity }} ·
         Richtwert: {{ s.improvement.budget_eur_from }} – {{ s.improvement.budget_eur_to }} €
-        <span class="label">Richtwert Klare KI, nicht Angebot. Verbindliche Preise erst nach Audit.</span>
       </p>
+      <p class="label">
+        Richtwert Klare KI, kein Angebot. Keine Lieferanten-Quote.
+        Verbindliche Preise erst nach gemeinsamem Audit.
+      </p>
+      <p><strong>Grundlage:</strong> {{ s.reason }}</p>
+      {% if s.evidence %}
+      <p><strong>Beobachtungen (Datenlage {{ s.confidence }}):</strong></p>
+      <ul class="evidence-list">
+        {% for ac, obs in s.evidence %}
+          {% set area = areas | selectattr("code","equalto",ac) | first %}
+          <li>{{ area.short if area else ac }}: {{ obs }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       <p><strong>Problem:</strong> {{ s.improvement.problem }}</p>
-      <p><strong>Vorschlag:</strong> {{ s.improvement.proposal }}</p>
+      <p><strong>Vorschlag (Reihenfolge: Bestandssystem → Markt → eigene Lösung):</strong>
+         {{ s.improvement.proposal }}</p>
+      <p><strong>Bestandssystem im Betrieb:</strong>
+         {{ preserved_system_label(s.improvement, findings_by_area) }}</p>
       {% if s.improvement.preserved_systems %}
-      <p><strong>Erhaltene Bestandssysteme:</strong>
-        {{ s.improvement.preserved_systems | join(", ") }}</p>
+      <p class="small muted"><em>Zusätzlich zu erhalten:</em>
+         {{ s.improvement.preserved_systems | join(", ") }}</p>
       {% endif %}
       {% if s.improvement.required_integrations %}
       <p><strong>Erforderliche Integrationen (alle unbestätigt):</strong></p>
@@ -125,7 +199,7 @@
       </ul>
       {% endif %}
       {% if s.improvement.possible_tools %}
-      <p><strong>Mögliche Werkzeuge:</strong></p>
+      <p><strong>Mögliche Werkzeuge (keine Lieferanten-Zusage):</strong></p>
       <ul>
         {% for t in s.improvement.possible_tools %}
           <li>{{ t.name }} — {{ t.note }}
@@ -150,12 +224,25 @@
 
 {% if unchosen %}
 <section class="section">
-  <h2>{% if result.to_clarify %}4{% else %}3{% endif %} · Weitere Katalog-Vorschläge (nicht ausgewählt)</h2>
+  <h2>Weitere Katalog-Vorschläge (nicht ausgewählt)</h2>
   <p class="small muted">Nur zur Information. Nicht Teil der aktuellen Diskussionsgrundlage.</p>
   <ul>
     {% for s in unchosen %}
-    <li>{{ s.improvement.title }} — Richtwert
-        {{ s.improvement.budget_eur_from }} – {{ s.improvement.budget_eur_to }} €</li>
+    <li>{{ s.improvement.title }} — Grundlage: {{ s.reason }}
+      · Richtwert {{ s.improvement.budget_eur_from }} – {{ s.improvement.budget_eur_to }} €</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endif %}
+
+{% if result.not_applicable and outcome != 'no_need' %}
+<section class="section">
+  <h2>Nicht anwendbar für diesen Betrieb</h2>
+  <ul>
+    {% for code, reason in result.not_applicable %}
+      {% set imp = improvement_by_code.get(code) %}
+      <li><strong>{{ imp.title if imp else code }}</strong>: {{ reason }}</li>
     {% endfor %}
   </ul>
 </section>
@@ -163,11 +250,24 @@
 
 <section class="section">
   <h2>Nächste Schritte</h2>
-  <ul>
-    <li>Technische Kurz-Audit der ausgewählten Bereiche (Zugänge erforderlich).</li>
-    <li>Bestätigung oder Widerlegung jeder Annahme in der Liste „Vor Umsetzung zu bestätigen".</li>
-    <li>Erstellung eines verbindlichen Angebots nach Abschluss des Audits.</li>
-  </ul>
+  {% if outcome == 'no_need' %}
+    <p>
+      Es sind keine Pflicht-Schritte vorgesehen. Falls gewünscht, kann der
+      Betrieb eine formale technische Bestätigung einzelner Bereiche
+      beauftragen; dies ist optional und ohne Preis-Zusage.
+    </p>
+  {% elif outcome == 'insufficient' %}
+    <ul>
+      <li>Fehlende Antworten in Kernbereichen gemeinsam vervollständigen.</li>
+      <li>Noch kein verbindliches Angebot vorlegen.</li>
+    </ul>
+  {% else %}
+    <ul>
+      <li>Technische Kurz-Audit der ausgewählten Bereiche (Zugänge erforderlich).</li>
+      <li>Bestätigung oder Widerlegung jeder Annahme in der Liste „Vor Umsetzung zu bestätigen".</li>
+      <li>Erstellung eines verbindlichen Angebots nach Abschluss des Audits.</li>
+    </ul>
+  {% endif %}
 </section>
 
 <footer class="footer-note">

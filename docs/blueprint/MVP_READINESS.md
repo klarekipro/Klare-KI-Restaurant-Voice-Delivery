@@ -1,8 +1,13 @@
 # MVP Readiness — Klare KI Restaurant Blueprint
 
-Stand: 2026-11-02. Zweig `feat/restaurant-blueprint`, Basis-Commit `c472d3b`
-(MISSION 10 Demo Release). MISSION 11 (`feat/autonomous-takeover-hardening`)
-betrifft nur das Agent-Runner-Repo und ist für Blueprint nicht einzubeziehen.
+Stand: 2026-11-02 (MISSION 14 Remediation). Zweig
+`feat/blueprint-commercial-remediation`, Basis-Commit `53d04a5` (PR #9).
+
+**Korrektur gegenüber MISSION 12 Draft:** die frühere Behauptung, MISSION 11
+betreffe „nur Runner-Infra", war falsch. Der gespeicherte Patch
+(`feat/autonomous-takeover-hardening`) enthält App-Änderungen; er wurde in
+MISSION 14 geprüft und *nicht* automatisch übernommen (siehe
+`MISSION_13_CLOSURE_MATRIX.md`). D08 wurde frisch implementiert.
 
 ## 1. Was lokal funktioniert
 

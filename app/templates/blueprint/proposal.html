@@ -8,7 +8,7 @@
     <div>
       <h1>Vorschlag für {{ profile.restaurant_name }}</h1>
       <p class="muted small">
-        Basierend auf {{ answered }} von {{ total }} beantworteten Bereichen.
+        Basierend auf {{ answered }} von {{ total }} entschiedenen Bereichen.
         Katalog-Version <strong>{{ profile.catalog_version }}</strong>.
         Keine der aufgeführten Integrationen ist derzeit technisch verifiziert.
       </p>
@@ -21,18 +21,32 @@
   </div>
 </section>
 
-{% if answered == 0 %}
+{% if result.outcome == 'insufficient' and result.not_answered %}
 <section class="card">
-  <p>Es liegen noch keine Antworten vor.
-     <a href="/blueprint/diagnose/{{ profile.id }}">Beantworten Sie zunächst die Bereiche.</a></p>
+  <h2>Diagnose unvollständig</h2>
+  <p class="small">
+    Für eine belastbare Empfehlung fehlen noch folgende Antworten.
+    <a href="/blueprint/diagnose/{{ profile.id }}">Zur Diagnose</a>.
+  </p>
+  <ul class="shelf">
+    {% for code in result.not_answered %}
+      {% set area = areas | selectattr("code", "equalto", code) | first %}
+      <li>{{ area.title if area else code }}
+        {% if code in ('pos','payments','phone','kitchen') %}
+          <span class="chip warn">Kernbereich</span>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
 </section>
-{% else %}
+{% endif %}
 
 {% if result.to_clarify %}
 <section class="card">
   <h2>Zunächst klären</h2>
   <p class="small muted">
-    Diese Bereiche sind nicht als Lücken gewertet — sie werden im nächsten Gespräch gemeinsam geprüft.
+    Diese Bereiche sind nicht als Lücken gewertet — sie werden im nächsten
+    Gespräch gemeinsam geprüft.
   </p>
   <ul class="shelf">
     {% for code in result.to_clarify %}
@@ -43,22 +57,50 @@
 </section>
 {% endif %}
 
+{% if result.outcome == 'no_need' %}
+<section class="card">
+  <h2>Aktuell kein zusätzlicher Implementierungsbedarf festgestellt</h2>
+  <p>
+    Alle 12 Diagnose-Bereiche wurden beantwortet; keine der Antworten liefert
+    einen hinreichenden Treiber für die Katalog-Module. Das Werkzeug schlägt
+    daher ausdrücklich <strong>keine kostenpflichtige Umsetzung und auch kein
+    Pflicht-Audit vor</strong>.
+  </p>
+  {% if result.verify_recommended %}
+  <p class="small muted">
+    Hinweis: Für folgende als „bereits vorhanden" markierte Bereiche liegt noch
+    keine technische Verifikation vor. Eine Prüfung ist optional, nicht
+    zwingend:
+  </p>
+  <ul class="shelf">
+    {% for code in result.verify_recommended %}
+      {% set area = areas | selectattr("code","equalto",code) | first %}
+      <li>{{ area.title if area else code }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% else %}
+
 <form method="post" action="/blueprint/proposal/{{ profile.id }}/select">
 <section class="card">
   <h2>Empfohlene Verbesserungen</h2>
   <p class="small muted">
-    Wählen Sie die Verbesserungen aus, die der Betrieb mit Ihnen besprechen möchte.
-    Die Priorität ist ein Vorschlag auf Basis der Status-Antworten, keine Dringlichkeits­bewertung.
+    Wählen Sie die Verbesserungen aus, die der Betrieb mit Ihnen besprechen
+    möchte. Die vorgeschlagene Priorität ist eine Zusammenfassung der
+    Antworten, <strong>keine Dringlichkeitsbewertung</strong>.
   </p>
 
   {% if not result.suggestions %}
-  <p>Für die beantworteten Bereiche sind aktuell keine Verbesserungen aus dem Katalog zugeordnet.</p>
+  <p>Für die beantworteten Bereiche sind aktuell keine Verbesserungen aus dem
+     Katalog zugeordnet.</p>
   {% else %}
-  <table>
+  <table class="bp-stack">
     <thead>
       <tr>
         <th>Auswahl</th>
         <th>Verbesserung</th>
+        <th>Treiber (Evidenz)</th>
         <th>Priorität</th>
         <th>Richtwert (unverbindlich)</th>
       </tr>
@@ -66,28 +108,43 @@
     <tbody>
       {% for s in result.suggestions %}
       <tr>
-        <td>
+        <td data-label="Auswahl">
           <input type="checkbox" name="selected" value="{{ s.improvement.code }}"
                  {% if s.improvement.code in selected_codes %}checked{% endif %}>
         </td>
-        <td>
+        <td data-label="Verbesserung">
           <strong>{{ s.improvement.title }}</strong><br>
-          <span class="small muted">Für Bereiche:
-            {% for ac in s.driver_areas %}
-              {% set area = areas | selectattr("code","equalto",ac) | first %}
-              {{ area.short if area else ac }}{% if not loop.last %}, {% endif %}
-            {% endfor %}
+          <span class="small muted">
+            Grundlage:
+            {% if s.verdict == 'required' %}konkrete Anforderung{% else %}bedingte Anforderung{% endif %}
+            · Datenlage {{ s.confidence }}
           </span>
         </td>
-        <td>
+        <td data-label="Treiber" class="small">
+          <strong>{{ s.reason }}</strong>
+          {% if s.evidence %}
+          <ul class="plain" style="margin:0.25rem 0 0; padding:0;">
+            {% for ac, obs in s.evidence %}
+              {% set area = areas | selectattr("code","equalto",ac) | first %}
+              <li>{{ area.short if area else ac }}: {{ obs }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </td>
+        <td data-label="Priorität">
           <select name="priority_{{ s.improvement.code }}">
-            {% set current = priority_overrides.get(s.improvement.code, s.priority) %}
+            {% set current = display_priority.get(s.improvement.code, 'medium') %}
             <option value="high"   {% if current == 'high'   %}selected{% endif %}>Hohe Priorität</option>
             <option value="medium" {% if current == 'medium' %}selected{% endif %}>Mittlere Priorität</option>
             <option value="low"    {% if current == 'low'    %}selected{% endif %}>Niedrige Priorität</option>
           </select>
+          {% if s.improvement.code in manual_priority %}
+            <span class="chip">manuell</span>
+          {% else %}
+            <span class="chip">Vorschlag</span>
+          {% endif %}
         </td>
-        <td class="num">
+        <td data-label="Richtwert" class="num">
           {{ s.improvement.budget_eur_from }} – {{ s.improvement.budget_eur_to }} €
         </td>
       </tr>
@@ -99,12 +156,29 @@
 </section>
 </form>
 
+{% if result.not_applicable %}
+<section class="card">
+  <h2>Nicht anwendbar für diesen Betrieb</h2>
+  <p class="small muted">
+    Diese Katalog-Module wurden <strong>nicht</strong> vorgeschlagen, weil die
+    Betriebssituation sie laut Diagnose ausschließt oder sie dort nicht
+    sinnvoll wären.
+  </p>
+  <ul class="shelf">
+    {% for code, reason in result.not_applicable %}
+      {% set imp = improvement_by_code.get(code) %}
+      <li><strong>{{ imp.title if imp else code }}</strong>: {{ reason }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 {% if result.verify_recommended %}
 <section class="card">
   <h2>Verifikation empfohlen</h2>
   <p class="small muted">
     Diese Bereiche wurden als „bereits vorhanden" markiert, aber noch nicht
-    technisch mit dem Betrieb verifiziert.
+    technisch mit dem Betrieb verifiziert. Prüfung optional.
   </p>
   <ul class="shelf">
     {% for code in result.verify_recommended %}

@@ -2,7 +2,16 @@
 
 Status: *Entwurf nach Reviews der Spezialisten Product, Software Architecture, UX, Privacy (2026-11-02).* Reality-Check steht aus.
 
-Grundlage: PR #8 Commit `c472d3b` (MISSION 10 Demo Release). MISSION 11 (`feat/autonomous-takeover-hardening`) betrifft nur das Agent-Runner-Repo und ist für Blueprint nicht relevant — eine Integration ist derzeit nicht erforderlich.
+Grundlage: PR #8 Commit `c472d3b` (MISSION 10 Demo Release).
+
+**Korrektur (MISSION 14):** Die ursprüngliche Behauptung „MISSION 11 betrifft
+nur Runner-Infra" ist falsch. Der gespeicherte Patch
+`feat/autonomous-takeover-hardening` (Commit `7784750`) enthält
+App-Änderungen an `app/main.py` und mehreren Templates. In MISSION 14 wurde
+der Patch geprüft und *nicht* automatisch übernommen, weil er auf einem
+anderen Branch-Zweig liegt und D08 (Failed-Delivery-Recovery) nicht
+hinreichend adressiert. D08 wurde stattdessen frisch implementiert; siehe
+`MISSION_13_CLOSURE_MATRIX.md`.
 
 ## 1. Produkt-Scope
 

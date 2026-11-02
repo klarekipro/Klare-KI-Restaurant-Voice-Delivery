@@ -166,6 +166,13 @@ CREATE TABLE IF NOT EXISTS diagnostic_selections (
     selected          INTEGER NOT NULL DEFAULT 1 CHECK(selected IN (0,1)),
     priority          TEXT    NOT NULL DEFAULT 'medium'
                        CHECK(priority IN ('low','medium','high')),
+    -- MISSION 14 D05: distinguish engine-suggested priority from a sales
+    -- override. The selection route writes `priority_source='manual'` ONLY
+    -- for the box the user actually ticked or whose priority dropdown was
+    -- changed. Rows that would carry an engine-generated priority are
+    -- not persisted here any more.
+    priority_source   TEXT    NOT NULL DEFAULT 'manual'
+                       CHECK(priority_source IN ('manual','auto')),
     notes             TEXT    NOT NULL DEFAULT '',
     UNIQUE (profile_id, improvement_code)
 );
@@ -193,10 +200,23 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_selections_priority_source(conn: sqlite3.Connection) -> None:
+    """MISSION 14 D05: additive migration for existing DBs."""
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(diagnostic_selections)"
+    ).fetchall()}
+    if "priority_source" not in cols:
+        conn.execute(
+            "ALTER TABLE diagnostic_selections "
+            "ADD COLUMN priority_source TEXT NOT NULL DEFAULT 'manual'"
+        )
+
+
 def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _ensure_selections_priority_source(conn)
         conn.execute("INSERT OR IGNORE INTO order_contacts SELECT o.id,c.phone,c.name,c.street,c.house_number,c.plz,c.city,c.notes FROM orders o JOIN customers c ON c.id=o.customer_id")
     finally:
         conn.close()

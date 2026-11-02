@@ -33,6 +33,7 @@
 
   <div class="actions" style="margin-top:1rem">
     <a class="primary" href="/blueprint/proposal/{{ profile.id }}">Vorschlag anzeigen</a>
+    <a class="secondary" href="/blueprint/diagnose/{{ profile.id }}/edit">Reiter bearbeiten</a>
     <form method="post" action="/blueprint/diagnose/{{ profile.id }}/delete"
           onsubmit="return confirm('Dieses Profil mit allen Antworten unwiderruflich löschen?');"
           style="display:inline">
@@ -43,7 +44,7 @@
 
 <section class="card">
   <h2>Bereiche</h2>
-  <table>
+  <table class="bp-stack">
     <thead>
       <tr><th>Bereich</th><th>Status</th><th>Werkzeug</th><th>Hinweise</th><th></th></tr>
     </thead>
@@ -51,9 +52,9 @@
       {% for area in areas %}
         {% set f = findings.get(area.code) %}
         <tr>
-          <td><strong>{{ area.title }}</strong><br>
+          <td data-label="Bereich"><strong>{{ area.title }}</strong><br>
               <span class="small muted">{{ area.short }}</span></td>
-          <td>
+          <td data-label="Status">
             {% if f %}
               <span class="status-badge {{ f.status | bp_status_chip }}">{{ f.status | bp_status_de }}</span>
               {% if f.verified %}<span class="chip ok" title="Vom Betrieb technisch bestätigt">verifiziert</span>{% endif %}
@@ -61,10 +62,12 @@
               <span class="muted">— noch nicht beantwortet —</span>
             {% endif %}
           </td>
-          <td>{{ (f.current_tool if f else "") or "—" }}</td>
-          <td class="small">{{ (f.notes if f else "") or "—" }}</td>
-          <td><a class="link" href="/blueprint/diagnose/{{ profile.id }}/area/{{ area.code }}">
-            {{ "Bearbeiten" if f else "Beantworten" }}</a></td>
+          <td data-label="Werkzeug">{{ (f.current_tool if f else "") or "—" }}</td>
+          <td data-label="Hinweise" class="small">{{ (f.notes if f else "") or "—" }}</td>
+          <td data-label="Aktion">
+            <a class="link" href="/blueprint/diagnose/{{ profile.id }}/area/{{ area.code }}">
+              {{ "Bearbeiten" if f else "Beantworten" }}</a>
+          </td>
         </tr>
       {% endfor %}
     </tbody>

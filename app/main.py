@@ -691,13 +691,30 @@ def create_app() -> FastAPI:
                 "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.status = 'ready' ORDER BY o.ready_at ASC"
             ).fetchall()
+            # MISSION 14 D08: failed-delivery recovery queue. The last-known
+            # failure reason is the detail of the most recent
+            # state.failed_delivery event.
+            failed = conn.execute(
+                "SELECT o.*, c.name AS customer_name, c.street, c.house_number, "
+                "       c.plz, c.city, "
+                "       (SELECT e.detail FROM order_events e "
+                "        WHERE e.order_id = o.id AND e.event = 'state.failed_delivery' "
+                "        ORDER BY e.id DESC LIMIT 1) AS failure_reason, "
+                "       (SELECT e.occurred_at FROM order_events e "
+                "        WHERE e.order_id = o.id AND e.event = 'state.failed_delivery' "
+                "        ORDER BY e.id DESC LIMIT 1) AS failed_at "
+                "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
+                "WHERE o.status = 'failed_delivery' "
+                "ORDER BY failed_at DESC"
+            ).fetchall()
             couriers = conn.execute(
                 "SELECT id, display_name FROM users WHERE role = 'courier' AND active = 1 "
                 "ORDER BY display_name"
             ).fetchall()
         finally:
             conn.close()
-        return TEMPLATES.TemplateResponse(request, "dispatch.html", ctx(request, ready=ready, couriers=couriers),
+        return TEMPLATES.TemplateResponse(request, "dispatch.html",
+            ctx(request, ready=ready, failed=failed, couriers=couriers),
         )
 
     @app.post("/dispatch/{order_id}/assign")
@@ -726,6 +743,90 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
         return RedirectResponse("/dispatch?flash=assigned", status_code=303)
+
+    # MISSION 14 D08: failed-delivery recovery — retry (reassign) and cancel.
+    @app.post("/dispatch/{order_id}/retry")
+    def dispatch_retry(request: Request, order_id: int,
+                       courier_id: int = Form(...),
+                       user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
+        conn = db.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT status FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            if not cur:
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            if cur["status"] != "failed_delivery":
+                raise HTTPException(
+                    409,
+                    "Nur Bestellungen im Status 'Zustellung fehlgeschlagen' "
+                    "können erneut zugewiesen werden.",
+                )
+            crow = conn.execute(
+                "SELECT id FROM users WHERE id = ? AND role = 'courier' AND active = 1",
+                (courier_id,),
+            ).fetchone()
+            if not crow:
+                raise HTTPException(400, "Fahrer unbekannt.")
+            conn.execute(
+                "UPDATE orders SET assigned_courier_id = ? WHERE id = ?",
+                (courier_id, order_id),
+            )
+            orders.transition(conn, order_id, "assigned",
+                              actor_user_id=user.id,
+                              detail=f"retry_courier={courier_id}")
+            conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
+        return RedirectResponse("/dispatch?flash=retried", status_code=303)
+
+    @app.post("/dispatch/{order_id}/cancel_failed")
+    def dispatch_cancel_failed(request: Request, order_id: int,
+                               reason: str = Form(...),
+                               user: auth.User = Depends(auth.require_strict("owner", "confirmer"))):
+        reason_v = reason.strip()
+        if len(reason_v) < 3:
+            raise HTTPException(400, "Grund ist Pflichtfeld (mindestens 3 Zeichen).")
+        if len(reason_v) > 400:
+            raise HTTPException(400, "Grund ist zu lang (max. 400 Zeichen).")
+        from .blueprint import redact as _redact
+        redaction = _redact.redact(reason_v)
+        conn = db.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT status FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()
+            if not cur:
+                raise HTTPException(404, "Bestellung nicht gefunden.")
+            if cur["status"] != "failed_delivery":
+                raise HTTPException(
+                    409,
+                    "Nur Bestellungen im Status 'Zustellung fehlgeschlagen' "
+                    "können hier endgültig abgebrochen werden.",
+                )
+            conn.execute(
+                "UPDATE orders SET reject_reason = ? WHERE id = ?",
+                (redaction.text, order_id),
+            )
+            orders.transition(conn, order_id, "cancelled",
+                              actor_user_id=user.id, detail=redaction.text[:160])
+            if redaction.changed:
+                orders.log_event(conn, order_id, "pii.reason_redacted",
+                                 user.id, ",".join(redaction.hits))
+            conn.execute("COMMIT")
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
+        return RedirectResponse("/dispatch?flash=cancelled", status_code=303)
 
     @app.get("/courier", response_class=HTMLResponse)
     def courier_page(request: Request,

@@ -40,17 +40,21 @@
     <div class="grid-2">
       <label>Qualität (1 = schlecht, 5 = sehr gut)
         <input name="quality" type="number" min="1" max="5"
-               value="{{ (finding.quality if finding and finding.quality) or '' }}">
+               value="{% if finding and finding.quality is not none %}{{ finding.quality }}{% endif %}">
       </label>
       <label>Automatisierungsgrad (1 = manuell, 5 = voll automatisch)
         <input name="automation" type="number" min="1" max="5"
-               value="{{ (finding.automation if finding and finding.automation) or '' }}">
+               value="{% if finding and finding.automation is not none %}{{ finding.automation }}{% endif %}">
       </label>
     </div>
 
     <label>Geschätzte manuelle Zeit pro Tag in Minuten (Angabe des Betreibers, unbestätigt)
       <input name="time_loss_min_per_day" type="number" min="0" max="1440"
-             value="{{ (finding.time_loss_min_per_day if finding and finding.time_loss_min_per_day is not none) or '' }}">
+             value="{% if finding and finding.time_loss_min_per_day is not none %}{{ finding.time_loss_min_per_day }}{% endif %}">
+      <span class="hint small">
+        0 bedeutet „keine Zeitverluste"; leer bedeutet „nicht bekannt". Beide
+        Werte werden unterschiedlich ausgewertet.
+      </span>
     </label>
 
     <label class="inline">

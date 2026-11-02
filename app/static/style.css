@@ -204,3 +204,63 @@ details > summary.link { cursor: pointer; }
 .status-badge--missing::before  { content: "! "; }
 .status-badge--unknown          { background:#F3F4F6; color:#374151; }
 .status-badge--unknown::before  { content: "? "; }
+
+/* MISSION 14 D09: focus-visible outline, globally; previously missing. */
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, .link:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px;
+}
+
+/* MISSION 14 D08/D09: horizontal scroll fallback for wide tables that must
+   keep their columns intact (e.g. dispatch failed-queue, report ist-zustand). */
+.scroll-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* MISSION 14 D09: mobile card-stack transform for Blueprint tables with the
+   `.bp-stack` class. Below 640 px each row becomes a card, each cell carries
+   its label via `data-label`. The thead is visually hidden (clip technique)
+   but still present in the DOM for screen readers. */
+@media screen and (max-width: 640px) {
+  .container { padding: 0 0.75rem; }
+  .bp-stack, .bp-stack thead, .bp-stack tbody,
+  .bp-stack tr, .bp-stack td, .bp-stack th {
+    display: block;
+    width: 100%;
+  }
+  .bp-stack thead {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); border: 0;
+  }
+  .bp-stack tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    background: #fff;
+  }
+  .bp-stack td {
+    border-bottom: 1px dashed var(--border);
+    padding: 0.3rem 0;
+    text-align: left;
+  }
+  .bp-stack td:last-child { border-bottom: 0; }
+  .bp-stack td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.8rem;
+    color: var(--mut);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.15rem;
+  }
+  .bp-stack td.num { text-align: left; }
+
+  /* Blueprint action links need a 44 px tap target on mobile. */
+  .actions a.link, .actions .link, main .bp-stack a.link {
+    min-height: 44px;
+    padding: 0.5rem 0.6rem;
+    display: inline-flex;
+    align-items: center;
+  }
+}

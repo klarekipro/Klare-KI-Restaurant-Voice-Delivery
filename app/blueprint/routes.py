@@ -289,6 +289,66 @@ def diagnose_area_submit(
     return RedirectResponse(f"/blueprint/diagnose/{pid}", status_code=303)
 
 
+# ---------- Edit profile basics (MISSION 14 D01) ----------
+
+@router.get("/diagnose/{pid}/edit", response_class=HTMLResponse)
+def diagnose_edit_form(request: Request, pid: int,
+                       user: auth.User = Depends(auth.require_strict("owner"))):
+    conn = db.connect()
+    try:
+        profile = _load_profile(conn, pid)
+    finally:
+        conn.close()
+    if not profile:
+        raise HTTPException(404, "Profil nicht gefunden.")
+    return _TEMPLATES.TemplateResponse(
+        request, "blueprint/diagnose_edit.html",
+        _ctx(request, profile=profile, error=None),
+    )
+
+
+@router.post("/diagnose/{pid}/edit")
+def diagnose_edit_submit(
+    request: Request, pid: int,
+    restaurant_name: str = Form(...),
+    city: str = Form(""),
+    cuisine: str = Form(""),
+    locations_count: int = Form(1),
+    contact_person: str = Form(""),
+    contact_role: str = Form(""),
+    user: auth.User = Depends(auth.require_strict("owner")),
+):
+    name = restaurant_name.strip()
+    if not name:
+        raise HTTPException(400, "Restaurantname ist erforderlich.")
+    if len(name) > 120 or len(city) > 80 or len(cuisine) > 80 \
+            or len(contact_person) > 120 or len(contact_role) > 60:
+        raise HTTPException(400, "Eingabefeld überschreitet die zulässige Länge.")
+    if locations_count < 1 or locations_count > 999:
+        raise HTTPException(400, "Standortanzahl muss zwischen 1 und 999 liegen.")
+    conn = db.connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if not _load_profile(conn, pid):
+            raise HTTPException(404, "Profil nicht gefunden.")
+        conn.execute(
+            "UPDATE diagnostic_profiles SET "
+            "  restaurant_name=?, city=?, cuisine=?, locations_count=?, "
+            "  contact_person=?, contact_role=?, updated_at=datetime('now') "
+            "WHERE id=?",
+            (name, city.strip(), cuisine.strip(), locations_count,
+             contact_person.strip(), contact_role.strip(), pid),
+        )
+        _log(conn, user.id, "blueprint.profile.update", pid, "basics")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+    return RedirectResponse(f"/blueprint/diagnose/{pid}", status_code=303)
+
+
 # ---------- Status transitions + delete ----------
 
 _ALLOWED_STATUS = ("draft", "review", "shared")
@@ -345,6 +405,28 @@ def _gap_for_profile(conn, pid: int):
     return findings, gap.analyze(findings)
 
 
+_ENGINE_PRIORITY = {
+    ("required", "high"):   "high",
+    ("required", "medium"): "high",
+    ("required", "low"):    "medium",
+    ("conditional", "high"):   "medium",
+    ("conditional", "medium"): "low",
+    ("conditional", "low"):    "low",
+}
+
+
+def _engine_priority(suggestion) -> str:
+    """Default priority *suggestion* for the sales conversation.
+
+    Documented as "Vorschlag — keine Dringlichkeitsbewertung" in the UI.
+    The engine never writes this to disk; it only appears when the human
+    user has not manually set a priority (MISSION 14 D05).
+    """
+    return _ENGINE_PRIORITY.get(
+        (suggestion.verdict, suggestion.confidence), "medium"
+    )
+
+
 @router.get("/proposal/{pid}", response_class=HTMLResponse)
 def proposal_view(request: Request, pid: int,
                   user: auth.User = Depends(auth.require_strict("owner"))):
@@ -357,12 +439,17 @@ def proposal_view(request: Request, pid: int,
         selections = _load_selections(conn, pid)
     finally:
         conn.close()
-    selected_codes = {
-        s["improvement_code"] for s in selections if s["selected"]
+    selected_codes = {s["improvement_code"] for s in selections if s["selected"]}
+    # Manual override only visible when source is 'manual' (D05).
+    manual_priority = {
+        s["improvement_code"]: s["priority"]
+        for s in selections if s.get("priority_source") == "manual"
     }
-    priority_overrides = {
-        s["improvement_code"]: s["priority"] for s in selections
-    }
+    # Build the display priority: user override wins, otherwise engine.
+    engine_priority = {s.improvement.code: _engine_priority(s)
+                       for s in result.suggestions}
+    display_priority = {**engine_priority, **manual_priority}
+
     return _TEMPLATES.TemplateResponse(
         request, "blueprint/proposal.html",
         _ctx(request,
@@ -370,8 +457,11 @@ def proposal_view(request: Request, pid: int,
              findings_by_area={f["area_code"]: f for f in findings},
              result=result,
              selected_codes=selected_codes,
-             priority_overrides=priority_overrides,
-             answered=len(findings),
+             display_priority=display_priority,
+             manual_priority=manual_priority,
+             preserved_system_label=gap.preserved_system_label,
+             improvement_by_code=catalog.IMPROVEMENT_BY_CODE,
+             answered=sum(1 for f in findings if f["status"] != "unknown"),
              total=len(catalog.DIAGNOSE_AREAS)),
     )
 
@@ -379,29 +469,48 @@ def proposal_view(request: Request, pid: int,
 @router.post("/proposal/{pid}/select")
 async def proposal_select(request: Request, pid: int,
                           user: auth.User = Depends(auth.require_strict("owner"))):
+    """Persist only the actually-selected rows with a manual priority.
+
+    MISSION 14 D05: writing a row for every catalog entry (with a default
+    medium priority) silently overrode engine-generated priorities for
+    improvements the user had not touched. The new contract is:
+
+    - A row exists in ``diagnostic_selections`` ONLY for an improvement
+      the user ticked.
+    - Its priority is the explicit choice from the form, stored with
+      ``priority_source='manual'``.
+    - Un-ticked improvements have NO row — the proposal view falls back
+      to the engine's suggested priority.
+    """
     form = await request.form()
+    selected_codes = set(form.getlist("selected"))
+    priorities: dict[str, str] = {}
+    for code in selected_codes:
+        raw = (form.get(f"priority_{code}") or "medium").strip()
+        if raw not in ("low", "medium", "high"):
+            raw = "medium"
+        priorities[code] = raw
+
     conn = db.connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
         profile = _load_profile(conn, pid)
         if not profile:
             raise HTTPException(404, "Profil nicht gefunden.")
-        selected_codes = set(form.getlist("selected"))
-        for improvement in catalog.IMPROVEMENTS:
-            code = improvement.code
-            raw_prio = (form.get(f"priority_{code}") or "medium").strip()
-            if raw_prio not in ("low", "medium", "high"):
-                raw_prio = "medium"
-            is_selected = 1 if code in selected_codes else 0
+        conn.execute(
+            "DELETE FROM diagnostic_selections WHERE profile_id=?", (pid,)
+        )
+        for code, prio in priorities.items():
+            if code not in catalog.IMPROVEMENT_BY_CODE:
+                continue
             conn.execute(
                 "INSERT INTO diagnostic_selections "
-                "(profile_id, improvement_code, selected, priority) "
-                "VALUES (?,?,?,?) "
-                "ON CONFLICT(profile_id, improvement_code) DO UPDATE SET "
-                "  selected=excluded.selected, priority=excluded.priority",
-                (pid, code, is_selected, raw_prio),
+                "(profile_id, improvement_code, selected, priority, priority_source) "
+                "VALUES (?,?,?,?,'manual')",
+                (pid, code, 1, prio),
             )
-        _log(conn, user.id, "blueprint.selection.update", pid)
+        _log(conn, user.id, "blueprint.selection.update", pid,
+             f"selected={len(priorities)}")
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -425,6 +534,7 @@ def proposal_report(request: Request, pid: int,
     finally:
         conn.close()
 
+    findings_by_area = {f["area_code"]: f for f in findings}
     selected = {s["improvement_code"]: s for s in selections if s["selected"]}
     chosen = tuple(
         s for s in result.suggestions if s.improvement.code in selected
@@ -432,17 +542,26 @@ def proposal_report(request: Request, pid: int,
     unchosen = tuple(
         s for s in result.suggestions if s.improvement.code not in selected
     )
+    display_priority = {s.improvement.code: _engine_priority(s)
+                        for s in result.suggestions}
+    for code, row in selected.items():
+        if row.get("priority_source") == "manual":
+            display_priority[code] = row["priority"]
 
     now_local = datetime.now(ZoneInfo("Europe/Berlin"))
     return _TEMPLATES.TemplateResponse(
         request, "blueprint/report.html",
         _ctx(request,
              profile=profile,
-             findings_by_area={f["area_code"]: f for f in findings},
+             findings_by_area=findings_by_area,
              result=result,
              selected=selected,
              chosen=chosen,
              unchosen=unchosen,
+             display_priority=display_priority,
+             preserved_system_label=gap.preserved_system_label,
+             improvement_by_code=catalog.IMPROVEMENT_BY_CODE,
              generated_at=now_local.strftime("%d.%m.%Y %H:%M"),
-             total=len(catalog.DIAGNOSE_AREAS)),
+             total=len(catalog.DIAGNOSE_AREAS),
+             outcome=result.outcome),
     )
