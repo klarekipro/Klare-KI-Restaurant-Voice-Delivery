@@ -1,3 +1,32 @@
+# Current state — Mission 09
+
+Branch: `fix/unattended-execution-timeout`; worktree: `/Users/admin/Projects/restaurant-timeout-recovery`.
+Source: `5d06429b8b71c58266f58fa5fc03ddf634ad7264` plus local queue patch `784e23b`.
+Validated implementation: `5aa4a88f5def49ee0d004f37119c7181d5eb78cd`.
+Resolve final handoff SHA with `git rev-parse HEAD`; verify remote branch before takeover.
+PR base: `feat/automatic-quota-resume`. Mission 09 authorizes a separate Draft PR, not merge or deployment.
+
+Read `outputs/codex/mission-09/REPORT.md`, `evidence.json` and the timeout section of `tools/agent-runner/README.md`.
+92 runner tests passed. Real isolated Claude timeout, Codex continuation and Claude review completed in mission
+`a626518cbb1e`; duplicate drive created zero attempts. Earlier synthetic-fixture run `764e24a6287d` remains held
+because compile generated unignored files. Neither record was rewritten to hide that failure.
+
+Original night mission `86907825eb6d` remains WAITING_APPROVAL. PID/PGID 97481 are absent; 102 file hashes and all
+mission records match the private read-only backup. No night mission resume, limit reset or job modification occurred.
+This code is published for review only; the installed scheduler still points at its previous runner.
+
+New missions may set `invocation_seconds` independently from total `max_seconds`; timeout recovery defaults to hold.
+Only trusted, explicitly authorized local repeat-safe missions with external checkpoint checks may opt into checkpoint
+continuation. Unknown execution outcomes and external side effects must not replay automatically.
+
+Next: review the PR, especially process-group/timeout recovery assumptions. Any rollout to the active scheduler or
+new recovery of the night mission must preserve its hold and original budgets; do not silently bind old code authorizations.
+Long-duration production-like endurance, detached-process detection and night-task internal Claude actions remain unverified.
+
+---
+
+The following is historical Mission 06/08 context, not the current scheduler installation claim.
+
 # Current state — Mission 06
 
 Branch: feat/automatic-quota-resume. Worktree: /Users/admin/Projects/restaurant-quota-resume. Base PR5: 8471c4d5215b80cb260a546d339291afe727630e. Resolve final SHA with git rev-parse HEAD and verify remote/status before work. No merge/deployment approval.

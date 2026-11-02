@@ -21,3 +21,13 @@
 - Mission 06: quota waiting is a separate persistent state, not a human approval. Automatic resume and any model availability probe require authorization in the original mission definition; time and invocation budgets include waiting/probes.
 - Provider auth status cannot establish quota capacity. Prefer existing actual-response evidence; otherwise use an authorized minimal probe under conservative global frequency/backoff/check caps. Never parse prose reset claims.
 - Bind auto-resume to scope/code/content; atomically persist probe recovery and use the same writer lock. LaunchAgent configuration is generated and validated only; persistent install/enable requires separate explicit user approval.
+
+- Mission 09: a timeout is an incomplete execution outcome, never evidence of quota. Keep the original mission clock;
+  add invocation_seconds (default 900), clamp calls to remaining max_seconds (default 600), retain probe caps.
+- Persist private event streams and process metadata outside scratch; heartbeat means process/output activity only.
+  Verify PID plus PGID after TERM/KILL/reap before validation/approval. Unknown outcomes hold without replay.
+- Default timeout_recovery=hold; checkpoint continuation is an explicit trusted local-only, repeat-safe authorization
+  with mandatory external safety checks, bounded retries and independent completion review. Remote side effects
+  and detached/untracked processes require inspection; no exactly-once claim for them.
+- Mission 09 validates code in a separate worktree; preserves original night mission and scheduler configuration.
+  Implementation 5aa4a88; evidence and verification limits are in outputs/codex/mission-09/REPORT.md.
