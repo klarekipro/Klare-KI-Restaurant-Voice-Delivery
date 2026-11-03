@@ -80,6 +80,27 @@
   </ul>
   {% endif %}
 </section>
+{% elif result.outcome == 'problems_without_match' %}
+<section class="card">
+  <h2>Probleme festgestellt — Katalog bietet derzeit kein passendes Modul</h2>
+  <p>
+    Für folgende Bereiche wurden Probleme festgestellt. Der aktuelle Katalog
+    enthält <strong>kein passendes Standard-Modul</strong>. Blueprint erfindet
+    in diesem Fall keine Integration — die Punkte brauchen eine individuelle
+    technische Analyse.
+  </p>
+  <ul class="shelf">
+    {% for p in result.problems %}
+      {% if p.area_code in result.problems_without_match %}
+        {% set area = areas_by_code.get(p.area_code) %}
+        <li><strong>{{ area.title if area else p.area_code }}</strong>:
+          {{ p.reason }}
+          <span class="chip">Datenlage {{ p.confidence }}</span>
+        </li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+</section>
 {% else %}
 
 <form method="post" action="/blueprint/proposal/{{ profile.id }}/select">

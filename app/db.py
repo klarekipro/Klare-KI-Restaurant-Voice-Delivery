@@ -201,15 +201,38 @@ def connect() -> sqlite3.Connection:
 
 
 def _ensure_selections_priority_source(conn: sqlite3.Connection) -> None:
-    """MISSION 14 D05: additive migration for existing DBs."""
+    """MISSION 14 D05 + MISSION 16 R6: additive migration for existing DBs.
+
+    When MISSION 12 wrote a row for every catalog item with ``selected=0``
+    and ``priority='medium'``, the MISSION 14 migration marked every one of
+    them as ``priority_source='manual'``. The proposal view then applied
+    these stale medium overrides to engine-computed highs the operator had
+    never seen. MISSION 16 fixes it in two places:
+
+    1. Here (database side): for any pre-existing row with ``selected=0``,
+       flip the stored ``priority_source`` to ``'auto'`` so legacy rows do
+       not masquerade as sales decisions.
+    2. In ``routes.proposal_view`` / ``proposal_report``: filter manual
+       overrides by ``selected=1``.
+    """
     cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(diagnostic_selections)"
     ).fetchall()}
     if "priority_source" not in cols:
+        # First install the column; default to 'auto' so legacy rows carry a
+        # neutral source. Rows written by the current `proposal_select` route
+        # explicitly set `priority_source='manual'`.
         conn.execute(
             "ALTER TABLE diagnostic_selections "
-            "ADD COLUMN priority_source TEXT NOT NULL DEFAULT 'manual'"
+            "ADD COLUMN priority_source TEXT NOT NULL DEFAULT 'auto'"
         )
+    # Backfill rule — safe to re-run on every init: any row that is not
+    # selected is treated as engine-generated. Selected rows keep whatever
+    # the owner last chose.
+    conn.execute(
+        "UPDATE diagnostic_selections SET priority_source='auto' "
+        "WHERE selected = 0"
+    )
 
 
 def init_db() -> None:

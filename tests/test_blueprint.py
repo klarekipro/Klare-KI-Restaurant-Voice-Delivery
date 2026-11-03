@@ -299,17 +299,27 @@ def test_gap_unit_unknown_only():
     assert result.suggestions == ()
 
 
-def test_gap_unit_missing_phone_proposes_high():
+def test_gap_unit_missing_phone_proposes_required_with_verified_high_confidence():
+    """MISSION 16 R5: status-only unverified missing is `required` but NOT high
+    confidence. Verified or measured missing may be high."""
     from app.blueprint.gap import analyze
-    result = analyze([{"area_code": "phone", "status": "missing", "verified": 0,
+    # Status-only, unverified: required but medium confidence.
+    r_bare = analyze([{"area_code": "phone", "status": "missing", "verified": 0,
                         "quality": None, "automation": None,
                         "time_loss_min_per_day": None, "notes": "",
                         "current_tool": ""}])
-    titles = [s.improvement.title for s in result.suggestions]
+    titles = [s.improvement.title for s in r_bare.suggestions]
     assert "KI-gestützte Telefonannahme" in titles
-    s = result.suggestions[0]
-    assert s.verdict == "required"
-    assert s.confidence == "high"
+    s_bare = r_bare.suggestions[0]
+    assert s_bare.verdict == "required"
+    assert s_bare.confidence == "medium"  # NOT high — unverified status-only.
+    # Verified missing: high confidence is allowed.
+    r_ver = analyze([{"area_code": "phone", "status": "missing", "verified": 1,
+                       "quality": None, "automation": None,
+                       "time_loss_min_per_day": None, "notes": "",
+                       "current_tool": ""}])
+    s_ver = r_ver.suggestions[0]
+    assert s_ver.confidence == "high"
 
 
 def test_gap_unit_available_not_proposed():

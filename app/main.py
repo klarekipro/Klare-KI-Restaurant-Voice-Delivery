@@ -693,15 +693,17 @@ def create_app() -> FastAPI:
             ).fetchall()
             # MISSION 14 D08: failed-delivery recovery queue. The last-known
             # failure reason is the detail of the most recent
-            # state.failed_delivery event.
+            # status.failed_delivery event (MISSION 16 R7: orders.transition
+            # writes 'status.<state>', the previous reader used 'state.<state>'
+            # and silently returned NULL for reason/timestamp).
             failed = conn.execute(
                 "SELECT o.*, c.name AS customer_name, c.street, c.house_number, "
                 "       c.plz, c.city, "
                 "       (SELECT e.detail FROM order_events e "
-                "        WHERE e.order_id = o.id AND e.event = 'state.failed_delivery' "
+                "        WHERE e.order_id = o.id AND e.event = 'status.failed_delivery' "
                 "        ORDER BY e.id DESC LIMIT 1) AS failure_reason, "
                 "       (SELECT e.occurred_at FROM order_events e "
-                "        WHERE e.order_id = o.id AND e.event = 'state.failed_delivery' "
+                "        WHERE e.order_id = o.id AND e.event = 'status.failed_delivery' "
                 "        ORDER BY e.id DESC LIMIT 1) AS failed_at "
                 "FROM orders o LEFT JOIN order_contacts c ON o.id = c.order_id "
                 "WHERE o.status = 'failed_delivery' "
