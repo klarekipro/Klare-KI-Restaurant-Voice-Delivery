@@ -1,5 +1,7 @@
 # Klare KI — Restaurant Voice & Delivery MVP
 
+> **Portfolio-Kurzüberblick:** Lokaler FastAPI/SQLite-MVP für Bestellungen, menschliche Freigabe, Küche, Fahrerauslieferung und Reporting. Der Telefonanruf wird derzeit **im Browser simuliert**; echte Telefonie, Spracherkennung, LLM-Dialog und Sprachausgabe sind noch nicht angebunden. **Meine weiteren öffentlichen Projekte:** [KI-Portfolio](https://github.com/klareki-lab/Train-Today-AI-Business-Suite/blob/main/PORTFOLIO.md).
+
 Lokal lauffähiger MVP eines KI-Telefon-Bestellassistenten für ein Lieferrestaurant (Zielmarkt Deutschland). Dieser Repo-Zustand liefert:
 
 - einen browserbasierten Betreiberteil (Konfirmierer, Küche, Fahrer, Besitzer),
